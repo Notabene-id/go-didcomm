@@ -49,60 +49,29 @@ func GenerateDIDKey() (*DIDDocument, *KeyPair, error) {
 	}
 
 	// Encode Ed25519 public key with multicodec prefix
-	did := encodeDIDKey(multicodecEd25519, kp.SigningPublic)
+	did := encodeDIDKey(multicodecEd25519, kp.signingPublic)
 
 	// Build signing verification method key ID
 	sigFragment := did[len("did:key:"):]
 	sigKID := did + "#" + sigFragment
 
 	// Build encryption key fragment from X25519 public key
-	encFragment := encodeDIDKeyFragment(multicodecX25519, kp.EncryptionPublic.Bytes())
+	encFragment := encodeDIDKeyFragment(multicodecX25519, kp.encryptionPublic.Bytes())
 	encKID := did + "#" + encFragment
 
-	// Set KIDs on JWK keys
-	_ = kp.SigningJWK.Set(jwk.KeyIDKey, sigKID)
-	_ = kp.EncryptionJWK.Set(jwk.KeyIDKey, encKID)
-
-	sigPubJWK, err := kp.SigningPublicJWK()
-	if err != nil {
-		return nil, nil, fmt.Errorf("derive signing public JWK: %w", err)
-	}
-	_ = sigPubJWK.Set(jwk.KeyIDKey, sigKID)
-	_ = sigPubJWK.Set(jwk.AlgorithmKey, jwa.EdDSA())
-
-	encPubJWK, err := kp.EncryptionPublicJWK()
-	if err != nil {
-		return nil, nil, fmt.Errorf("derive encryption public JWK: %w", err)
-	}
-	_ = encPubJWK.Set(jwk.KeyIDKey, encKID)
-	_ = encPubJWK.Set(jwk.AlgorithmKey, jwa.ECDH_ES_A256KW())
-
-	doc := &DIDDocument{
-		ID: did,
-		Authentication: []VerificationMethod{
-			{
-				ID:         sigKID,
-				Type:       "Ed25519VerificationKey2020",
-				Controller: did,
-				PublicKey:  sigPubJWK,
-			},
-		},
-		KeyAgreement: []VerificationMethod{
-			{
-				ID:         encKID,
-				Type:       "X25519KeyAgreementKey2020",
-				Controller: did,
-				PublicKey:  encPubJWK,
-			},
-		},
-	}
-
-	return doc, kp, nil
+	return buildDIDDocument(did, sigKID, encKID, kp)
 }
 
 // GenerateDIDWeb generates a did:web with Ed25519/X25519 keys.
 // The caller is responsible for hosting the returned DID document at the appropriate URL.
 func GenerateDIDWeb(domain, path string) (*DIDDocument, *KeyPair, error) {
+	if domain == "" {
+		return nil, nil, fmt.Errorf("%w: empty domain", ErrInvalidMessage)
+	}
+	if strings.ContainsAny(domain, " \t\n\r") {
+		return nil, nil, fmt.Errorf("%w: domain contains whitespace", ErrInvalidMessage)
+	}
+
 	kp, err := GenerateKeyPair()
 	if err != nil {
 		return nil, nil, err
@@ -120,22 +89,45 @@ func GenerateDIDWeb(domain, path string) (*DIDDocument, *KeyPair, error) {
 	sigKID := did + "#key-1"
 	encKID := did + "#key-2"
 
-	_ = kp.SigningJWK.Set(jwk.KeyIDKey, sigKID)
-	_ = kp.EncryptionJWK.Set(jwk.KeyIDKey, encKID)
+	return buildDIDDocument(did, sigKID, encKID, kp)
+}
+
+// buildDIDDocument constructs a DIDDocument from a DID string, key IDs, and key pair.
+func buildDIDDocument(did, sigKID, encKID string, kp *KeyPair) (*DIDDocument, *KeyPair, error) {
+	err := mustSet(kp.SigningJWK, jwk.KeyIDKey, sigKID)
+	if err != nil {
+		return nil, nil, err
+	}
+	err = mustSet(kp.EncryptionJWK, jwk.KeyIDKey, encKID)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	sigPubJWK, err := kp.SigningPublicJWK()
 	if err != nil {
 		return nil, nil, fmt.Errorf("derive signing public JWK: %w", err)
 	}
-	_ = sigPubJWK.Set(jwk.KeyIDKey, sigKID)
-	_ = sigPubJWK.Set(jwk.AlgorithmKey, jwa.EdDSA())
+	err = mustSet(sigPubJWK, jwk.KeyIDKey, sigKID)
+	if err != nil {
+		return nil, nil, err
+	}
+	err = mustSet(sigPubJWK, jwk.AlgorithmKey, jwa.EdDSA())
+	if err != nil {
+		return nil, nil, err
+	}
 
 	encPubJWK, err := kp.EncryptionPublicJWK()
 	if err != nil {
 		return nil, nil, fmt.Errorf("derive encryption public JWK: %w", err)
 	}
-	_ = encPubJWK.Set(jwk.KeyIDKey, encKID)
-	_ = encPubJWK.Set(jwk.AlgorithmKey, jwa.ECDH_ES_A256KW())
+	err = mustSet(encPubJWK, jwk.KeyIDKey, encKID)
+	if err != nil {
+		return nil, nil, err
+	}
+	err = mustSet(encPubJWK, jwk.AlgorithmKey, jwa.ECDH_ES_A256KW())
+	if err != nil {
+		return nil, nil, err
+	}
 
 	doc := &DIDDocument{
 		ID: did,
@@ -176,28 +168,33 @@ func encodeDIDKeyFragment(codec uint64, pubKeyBytes []byte) string {
 	return "z" + base58.Encode(prefixed)
 }
 
-// Resolver resolves DIDs to DID documents.
-type Resolver struct {
+// DIDResolver resolves DIDs to DID documents.
+type DIDResolver interface {
+	Resolve(ctx context.Context, did string) (*DIDDocument, error)
+}
+
+// InMemoryResolver is a simple in-memory implementation of DIDResolver.
+type InMemoryResolver struct {
 	mu   sync.RWMutex
 	docs map[string]*DIDDocument
 }
 
-// NewResolver creates a new DID resolver.
-func NewResolver() *Resolver {
-	return &Resolver{
+// NewInMemoryResolver creates a new in-memory DID resolver.
+func NewInMemoryResolver() *InMemoryResolver {
+	return &InMemoryResolver{
 		docs: make(map[string]*DIDDocument),
 	}
 }
 
 // Store registers a DID document with the resolver.
-func (r *Resolver) Store(doc *DIDDocument) {
+func (r *InMemoryResolver) Store(doc *DIDDocument) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.docs[doc.ID] = doc
 }
 
 // Resolve looks up a DID document by DID.
-func (r *Resolver) Resolve(_ context.Context, did string) (*DIDDocument, error) {
+func (r *InMemoryResolver) Resolve(_ context.Context, did string) (*DIDDocument, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 

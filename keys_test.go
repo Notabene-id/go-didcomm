@@ -13,16 +13,16 @@ func TestGenerateKeyPair(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if len(kp.SigningPrivate) != ed25519.PrivateKeySize {
-		t.Fatalf("expected %d bytes, got %d", ed25519.PrivateKeySize, len(kp.SigningPrivate))
+	if len(kp.signingPrivate) != ed25519.PrivateKeySize {
+		t.Fatalf("expected %d bytes, got %d", ed25519.PrivateKeySize, len(kp.signingPrivate))
 	}
-	if len(kp.SigningPublic) != ed25519.PublicKeySize {
-		t.Fatalf("expected %d bytes, got %d", ed25519.PublicKeySize, len(kp.SigningPublic))
+	if len(kp.signingPublic) != ed25519.PublicKeySize {
+		t.Fatalf("expected %d bytes, got %d", ed25519.PublicKeySize, len(kp.signingPublic))
 	}
-	if kp.EncryptionPrivate == nil {
+	if kp.encryptionPrivate == nil {
 		t.Fatal("encryption private key should not be nil")
 	}
-	if kp.EncryptionPublic == nil {
+	if kp.encryptionPublic == nil {
 		t.Fatal("encryption public key should not be nil")
 	}
 	if kp.SigningJWK == nil {
@@ -43,7 +43,7 @@ func TestGenerateKeyPair_UniqueKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if kp1.SigningPublic.Equal(kp2.SigningPublic) {
+	if kp1.signingPublic.Equal(kp2.signingPublic) {
 		t.Fatal("generated keys should be unique")
 	}
 }

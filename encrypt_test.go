@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/lestrrat-go/jwx/v3/jwe"
 	"github.com/lestrrat-go/jwx/v3/jwk"
 )
 
@@ -139,36 +140,14 @@ func TestAnoncrypt_Headers(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	hdrs, err := parseJWEHeaders(encrypted)
+	msg, err := jwe.Parse(encrypted)
 	if err != nil {
 		t.Fatal(err)
 	}
 
+	hdrs := msg.ProtectedHeaders()
 	typ, ok := hdrs.Type()
 	if !ok || typ != "application/didcomm-encrypted+json" {
 		t.Fatalf("expected DIDComm encrypted type, got %v", typ)
-	}
-}
-
-func TestComputeAPV(t *testing.T) {
-	k1, err := jwk.Import([]byte("key1-material-32bytes-padding!!"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = k1.Set(jwk.KeyIDKey, "kid-b")
-
-	k2, err := jwk.Import([]byte("key2-material-32bytes-padding!!"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = k2.Set(jwk.KeyIDKey, "kid-a")
-
-	apv1 := computeAPV([]jwk.Key{k1, k2})
-
-	// Order shouldn't matter — kids are sorted
-	apv2 := computeAPV([]jwk.Key{k2, k1})
-
-	if string(apv1) != string(apv2) {
-		t.Fatal("APV should be deterministic regardless of key order")
 	}
 }

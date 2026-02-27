@@ -10,7 +10,7 @@ import (
 
 func TestAuthcryptRoundTrip(t *testing.T) {
 	// Generate Alice (sender) and Bob (recipient)
-	aliceDoc, aliceKP, err := GenerateDIDKey()
+	_, aliceKP, err := GenerateDIDKey()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -22,7 +22,6 @@ func TestAuthcryptRoundTrip(t *testing.T) {
 	msg := &Message{
 		ID:   "msg-1",
 		Type: "https://example.com/test",
-		From: aliceDoc.ID,
 		Body: json.RawMessage(`{"hello":"world"}`),
 	}
 
@@ -47,27 +46,25 @@ func TestAuthcryptRoundTrip(t *testing.T) {
 		t.Fatal("encrypted message should not be empty")
 	}
 
-	// Get Alice's public signing key for verification
+	// Decrypt with Bob's private key
+	decrypted, err := anonDecrypt(encrypted, bobKP.EncryptionJWK)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The decrypted content is a JWS — verify it with Alice's public key
 	aliceSigPub, err := aliceKP.SigningPublicJWK()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Decrypt and verify
-	decrypted, skid, err := authDecrypt(encrypted, bobKP.EncryptionJWK, aliceSigPub)
+	verified, err := verifySignature(decrypted, aliceSigPub)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Verify skid
-	aliceKID, _ := aliceKP.SigningJWK.KeyID()
-	if skid != aliceKID {
-		t.Fatalf("expected skid=%s, got %s", aliceKID, skid)
-	}
-
-	// Verify payload
 	var decoded Message
-	if err := json.Unmarshal(decrypted, &decoded); err != nil {
+	if err := json.Unmarshal(verified, &decoded); err != nil {
 		t.Fatal(err)
 	}
 	if decoded.ID != "msg-1" {
@@ -95,9 +92,15 @@ func TestAuthcrypt_WrongSenderKey(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Decrypt with Bob's key
+	decrypted, err := anonDecrypt(encrypted, bobKP.EncryptionJWK)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	// Try to verify with Eve's key — should fail
 	eveSigPub, _ := eveKP.SigningPublicJWK()
-	_, _, err = authDecrypt(encrypted, bobKP.EncryptionJWK, eveSigPub)
+	_, err = verifySignature(decrypted, eveSigPub)
 	if err == nil {
 		t.Fatal("verification should fail with wrong sender key")
 	}
@@ -124,8 +127,7 @@ func TestAuthcrypt_WrongRecipientKey(t *testing.T) {
 	}
 
 	// Try to decrypt with Eve's key — should fail
-	aliceSigPub, _ := aliceKP.SigningPublicJWK()
-	_, _, err = authDecrypt(encrypted, eveKP.EncryptionJWK, aliceSigPub)
+	_, err = anonDecrypt(encrypted, eveKP.EncryptionJWK)
 	if err == nil {
 		t.Fatal("decryption should fail with wrong recipient key")
 	}
@@ -165,26 +167,34 @@ func TestAuthcrypt_MultipleRecipients(t *testing.T) {
 	aliceSigPub, _ := aliceKP.SigningPublicJWK()
 
 	// Both should be able to decrypt and verify
-	dec1, _, err := authDecrypt(encrypted, bob1KP.EncryptionJWK, aliceSigPub)
+	dec1, err := anonDecrypt(encrypted, bob1KP.EncryptionJWK)
 	if err != nil {
 		t.Fatal("bob1 should be able to decrypt:", err)
 	}
+	verified1, err := verifySignature(dec1, aliceSigPub)
+	if err != nil {
+		t.Fatal("bob1 should be able to verify:", err)
+	}
 
 	var msg1 Message
-	if unmarshalErr := json.Unmarshal(dec1, &msg1); unmarshalErr != nil {
+	if unmarshalErr := json.Unmarshal(verified1, &msg1); unmarshalErr != nil {
 		t.Fatal(unmarshalErr)
 	}
 	if msg1.ID != "1" {
 		t.Fatalf("bob1: expected ID=1, got %s", msg1.ID)
 	}
 
-	dec2, _, err := authDecrypt(encrypted, bob2KP.EncryptionJWK, aliceSigPub)
+	dec2, err := anonDecrypt(encrypted, bob2KP.EncryptionJWK)
 	if err != nil {
 		t.Fatal("bob2 should be able to decrypt:", err)
 	}
+	verified2, err := verifySignature(dec2, aliceSigPub)
+	if err != nil {
+		t.Fatal("bob2 should be able to verify:", err)
+	}
 
 	var msg2 Message
-	if err := json.Unmarshal(dec2, &msg2); err != nil {
+	if err := json.Unmarshal(verified2, &msg2); err != nil {
 		t.Fatal(err)
 	}
 	if msg2.ID != "1" {

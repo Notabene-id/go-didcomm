@@ -1,10 +1,7 @@
 package didcomm
 
 import (
-	"crypto/sha256"
 	"fmt"
-	"sort"
-	"strings"
 
 	"github.com/lestrrat-go/jwx/v3/jwa"
 	"github.com/lestrrat-go/jwx/v3/jwe"
@@ -26,14 +23,18 @@ func anoncrypt(payload []byte, recipientKeys []jwk.Key) ([]byte, error) {
 	for _, rk := range recipientKeys {
 		per := jwe.NewHeaders()
 		if kid, ok := rk.KeyID(); ok && kid != "" {
-			_ = per.Set(jwe.KeyIDKey, kid)
+			if err := mustSet(per, jwe.KeyIDKey, kid); err != nil {
+				return nil, err
+			}
 		}
 		opts = append(opts, jwe.WithKey(jwa.ECDH_ES_A256KW(), rk, jwe.WithPerRecipientHeaders(per)))
 	}
 
 	// Set protected headers
 	hdrs := jwe.NewHeaders()
-	_ = hdrs.Set(jwe.TypeKey, "application/didcomm-encrypted+json")
+	if err := mustSet(hdrs, jwe.TypeKey, "application/didcomm-encrypted+json"); err != nil {
+		return nil, err
+	}
 
 	// NOTE: DIDComm v2 recommends APV (Agreement PartyVInfo) in the protected headers.
 	// However, jwx v3 has a bug where X25519 encryption ignores apu/apv in the Concat KDF
@@ -64,33 +65,4 @@ func anonDecrypt(encrypted []byte, privateKey jwk.Key) ([]byte, error) {
 		return nil, fmt.Errorf("%w: %w", ErrDecryptionFailed, err)
 	}
 	return payload, nil
-}
-
-// computeAPV computes the Agreement PartyVInfo for DIDComm v2.
-// It's SHA-256 of the sorted, dot-joined key IDs.
-// Currently unused due to jwx v3 X25519 KDF bug, but kept for future use.
-func computeAPV(keys []jwk.Key) []byte {
-	kids := make([]string, 0, len(keys))
-	for _, k := range keys {
-		kid, ok := k.KeyID()
-		if !ok || kid == "" {
-			continue
-		}
-		kids = append(kids, kid)
-	}
-
-	sort.Strings(kids)
-	joined := strings.Join(kids, ".")
-
-	hash := sha256.Sum256([]byte(joined))
-	return hash[:]
-}
-
-// parseJWEHeaders extracts the protected headers from a JWE message.
-func parseJWEHeaders(encrypted []byte) (jwe.Headers, error) {
-	msg, err := jwe.Parse(encrypted)
-	if err != nil {
-		return nil, fmt.Errorf("parse JWE: %w", err)
-	}
-	return msg.ProtectedHeaders(), nil
 }

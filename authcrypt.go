@@ -30,18 +30,27 @@ func authcrypt(payload []byte, signingKey jwk.Key, recipientKeys []jwk.Key) ([]b
 	for _, rk := range recipientKeys {
 		per := jwe.NewHeaders()
 		if kid, ok := rk.KeyID(); ok && kid != "" {
-			_ = per.Set(jwe.KeyIDKey, kid)
+			err = mustSet(per, jwe.KeyIDKey, kid)
+			if err != nil {
+				return nil, err
+			}
 		}
 		opts = append(opts, jwe.WithKey(jwa.ECDH_ES_A256KW(), rk, jwe.WithPerRecipientHeaders(per)))
 	}
 
 	// Set protected headers with sender identification
 	hdrs := jwe.NewHeaders()
-	_ = hdrs.Set(jwe.TypeKey, "application/didcomm-encrypted+json")
+	err = mustSet(hdrs, jwe.TypeKey, "application/didcomm-encrypted+json")
+	if err != nil {
+		return nil, err
+	}
 
 	// skid (sender key ID) identifies the sender per DIDComm v2 spec
 	if kid, ok := signingKey.KeyID(); ok && kid != "" {
-		_ = hdrs.Set("skid", kid)
+		err = mustSet(hdrs, "skid", kid)
+		if err != nil {
+			return nil, err
+		}
 	}
 	opts = append(opts, jwe.WithProtectedHeaders(hdrs))
 
@@ -55,32 +64,4 @@ func authcrypt(payload []byte, signingKey jwk.Key, recipientKeys []jwk.Key) ([]b
 		return nil, fmt.Errorf("%w: %w", ErrEncryptionFailed, err)
 	}
 	return encrypted, nil
-}
-
-// authDecrypt decrypts and verifies an authcrypt message.
-// Returns the inner payload, the sender's key ID (from skid header), and whether it was signed.
-func authDecrypt(encrypted []byte, privateKey, senderPublicKey jwk.Key) (payload []byte, skid string, err error) {
-	// Step 1: Decrypt the JWE
-	signed, err := jwe.Decrypt(
-		encrypted,
-		jwe.WithKey(jwa.ECDH_ES_A256KW(), privateKey),
-	)
-	if err != nil {
-		return nil, "", fmt.Errorf("%w: %w", ErrDecryptionFailed, err)
-	}
-
-	// Step 2: Extract skid from headers
-	hdrs, err := parseJWEHeaders(encrypted)
-	if err != nil {
-		return nil, "", fmt.Errorf("parse JWE headers: %w", err)
-	}
-	_ = hdrs.Get("skid", &skid)
-
-	// Step 3: Verify the JWS signature
-	payload, err = verifySignature(signed, senderPublicKey)
-	if err != nil {
-		return nil, skid, fmt.Errorf("authcrypt verify: %w", err)
-	}
-
-	return payload, skid, nil
 }

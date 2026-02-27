@@ -10,7 +10,7 @@ import (
 func setupAliceAndBob(t *testing.T) (aliceDoc *DIDDocument, bobDoc *DIDDocument, bobKP *KeyPair, client *Client) {
 	t.Helper()
 
-	resolver := NewResolver()
+	resolver := NewInMemoryResolver()
 	secrets := NewInMemorySecretsStore()
 
 	var aliceKP *KeyPair
@@ -234,7 +234,7 @@ func TestClient_Unpack_InvalidMessage(t *testing.T) {
 
 // Integration test: full Alice→Bob authcrypt round-trip
 func TestIntegration_AuthcryptRoundTrip(t *testing.T) {
-	resolver := NewResolver()
+	resolver := NewInMemoryResolver()
 	aliceSecrets := NewInMemorySecretsStore()
 	bobSecrets := NewInMemorySecretsStore()
 
@@ -304,7 +304,7 @@ func TestIntegration_AuthcryptRoundTrip(t *testing.T) {
 
 // Integration test: anoncrypt round-trip
 func TestIntegration_AnoncryptRoundTrip(t *testing.T) {
-	resolver := NewResolver()
+	resolver := NewInMemoryResolver()
 	bobSecrets := NewInMemorySecretsStore()
 
 	bobDoc, bobKP, err := GenerateDIDKey()
@@ -352,7 +352,7 @@ func TestIntegration_AnoncryptRoundTrip(t *testing.T) {
 
 // Integration test: signed-only round-trip
 func TestIntegration_SignedRoundTrip(t *testing.T) {
-	resolver := NewResolver()
+	resolver := NewInMemoryResolver()
 	aliceSecrets := NewInMemorySecretsStore()
 
 	aliceDoc, aliceKP, err := GenerateDIDKey()
@@ -395,6 +395,207 @@ func TestIntegration_SignedRoundTrip(t *testing.T) {
 	}
 }
 
+func TestClient_PackSigned_SenderDIDNotResolved(t *testing.T) {
+	resolver := NewInMemoryResolver()
+	secrets := NewInMemorySecretsStore()
+	client := NewClient(resolver, secrets)
+	ctx := context.Background()
+
+	msg := &Message{
+		ID:   "1",
+		Type: "test",
+		From: "did:key:unknown",
+		Body: json.RawMessage(`{}`),
+	}
+
+	_, err := client.PackSigned(ctx, msg)
+	if !errors.Is(err, ErrDIDNotFound) {
+		t.Fatalf("expected ErrDIDNotFound, got %v", err)
+	}
+}
+
+func TestClient_PackAnoncrypt_RecipientDIDNotResolved(t *testing.T) {
+	resolver := NewInMemoryResolver()
+	secrets := NewInMemorySecretsStore()
+	client := NewClient(resolver, secrets)
+	ctx := context.Background()
+
+	msg := &Message{
+		ID:   "1",
+		Type: "test",
+		To:   []string{"did:key:unknown"},
+		Body: json.RawMessage(`{}`),
+	}
+
+	_, err := client.PackAnoncrypt(ctx, msg)
+	if !errors.Is(err, ErrDIDNotFound) {
+		t.Fatalf("expected ErrDIDNotFound, got %v", err)
+	}
+}
+
+func TestClient_PackSigned_KeyNotInSecretsStore(t *testing.T) {
+	resolver := NewInMemoryResolver()
+	secrets := NewInMemorySecretsStore()
+
+	// Register DID document but don't store private keys
+	doc, _, err := GenerateDIDKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver.Store(doc)
+
+	client := NewClient(resolver, secrets)
+	ctx := context.Background()
+
+	msg := &Message{
+		ID:   "1",
+		Type: "test",
+		From: doc.ID,
+		Body: json.RawMessage(`{}`),
+	}
+
+	_, err = client.PackSigned(ctx, msg)
+	if !errors.Is(err, ErrKeyNotFound) {
+		t.Fatalf("expected ErrKeyNotFound, got %v", err)
+	}
+}
+
+func TestClient_PackAuthcrypt_SenderDIDNotResolved(t *testing.T) {
+	resolver := NewInMemoryResolver()
+	secrets := NewInMemorySecretsStore()
+
+	bobDoc, bobKP, err := GenerateDIDKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver.Store(bobDoc)
+	secrets.Store(bobKP)
+
+	client := NewClient(resolver, secrets)
+	ctx := context.Background()
+
+	msg := &Message{
+		ID:   "1",
+		Type: "test",
+		From: "did:key:unknown",
+		To:   []string{bobDoc.ID},
+		Body: json.RawMessage(`{}`),
+	}
+
+	_, err = client.PackAuthcrypt(ctx, msg)
+	if !errors.Is(err, ErrDIDNotFound) {
+		t.Fatalf("expected ErrDIDNotFound, got %v", err)
+	}
+}
+
+func TestClient_PackAuthcrypt_RecipientDIDNotResolved(t *testing.T) {
+	resolver := NewInMemoryResolver()
+	secrets := NewInMemorySecretsStore()
+
+	aliceDoc, aliceKP, err := GenerateDIDKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver.Store(aliceDoc)
+	secrets.Store(aliceKP)
+
+	client := NewClient(resolver, secrets)
+	ctx := context.Background()
+
+	msg := &Message{
+		ID:   "1",
+		Type: "test",
+		From: aliceDoc.ID,
+		To:   []string{"did:key:unknown"},
+		Body: json.RawMessage(`{}`),
+	}
+
+	_, err = client.PackAuthcrypt(ctx, msg)
+	if !errors.Is(err, ErrDIDNotFound) {
+		t.Fatalf("expected ErrDIDNotFound, got %v", err)
+	}
+}
+
+func TestIntegration_MultiRecipient_OnlyTargetCanDecrypt(t *testing.T) {
+	resolver := NewInMemoryResolver()
+	aliceSecrets := NewInMemorySecretsStore()
+	bobSecrets := NewInMemorySecretsStore()
+	carolSecrets := NewInMemorySecretsStore()
+
+	aliceDoc, aliceKP, err := GenerateDIDKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver.Store(aliceDoc)
+	aliceSecrets.Store(aliceKP)
+
+	bobDoc, bobKP, err := GenerateDIDKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver.Store(bobDoc)
+	bobSecrets.Store(bobKP)
+
+	carolDoc, carolKP, err := GenerateDIDKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver.Store(carolDoc)
+	carolSecrets.Store(carolKP)
+
+	// Eve is not a recipient
+	eveSecrets := NewInMemorySecretsStore()
+	_, eveKP, err := GenerateDIDKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	eveSecrets.Store(eveKP)
+
+	aliceClient := NewClient(resolver, aliceSecrets)
+	bobClient := NewClient(resolver, bobSecrets)
+	carolClient := NewClient(resolver, carolSecrets)
+	eveClient := NewClient(resolver, eveSecrets)
+
+	ctx := context.Background()
+
+	msg := &Message{
+		ID:   "multi-1",
+		Type: "https://example.com/test",
+		From: aliceDoc.ID,
+		To:   []string{bobDoc.ID, carolDoc.ID},
+		Body: json.RawMessage(`{"data":"for bob and carol"}`),
+	}
+
+	packed, err := aliceClient.PackAuthcrypt(ctx, msg)
+	if err != nil {
+		t.Fatal("pack:", err)
+	}
+
+	// Bob can decrypt
+	result, err := bobClient.Unpack(ctx, packed)
+	if err != nil {
+		t.Fatal("bob unpack:", err)
+	}
+	if result.Message.ID != "multi-1" {
+		t.Fatalf("bob: expected ID=multi-1, got %s", result.Message.ID)
+	}
+
+	// Carol can decrypt
+	result, err = carolClient.Unpack(ctx, packed)
+	if err != nil {
+		t.Fatal("carol unpack:", err)
+	}
+	if result.Message.ID != "multi-1" {
+		t.Fatalf("carol: expected ID=multi-1, got %s", result.Message.ID)
+	}
+
+	// Eve cannot decrypt
+	_, err = eveClient.Unpack(ctx, packed)
+	if !errors.Is(err, ErrDecryptionFailed) {
+		t.Fatalf("eve: expected ErrDecryptionFailed, got %v", err)
+	}
+}
+
 func TestIsJWE(t *testing.T) {
 	// Compact JWE has 5 parts (4 dots)
 	if !isJWE([]byte("a.b.c.d.e")) {
@@ -420,6 +621,13 @@ func TestIsJWS(t *testing.T) {
 	if isJWS([]byte("a.b.c.d.e")) {
 		t.Fatal("JWE should not be detected as JWS")
 	}
+	// JSON with 2 dots should NOT be detected as JWS
+	if isJWS([]byte(`{"a.b":"c.d"}`)) {
+		t.Fatal("JSON with dots should not be detected as JWS")
+	}
+	if isJWS([]byte{}) {
+		t.Fatal("empty data should not be detected as JWS")
+	}
 }
 
 func TestExtractDIDFromKID(t *testing.T) {
@@ -430,6 +638,9 @@ func TestExtractDIDFromKID(t *testing.T) {
 		{"did:key:z123#z456", "did:key:z123"},
 		{"did:web:example.com:alice#key-1", "did:web:example.com:alice"},
 		{"no-fragment", ""},
+		{"", ""},
+		{"#just-fragment", ""},
+		{"did:key:z123#a#b", "did:key:z123#a"},
 	}
 	for _, tt := range tests {
 		if got := extractDIDFromKID(tt.kid); got != tt.did {

@@ -12,9 +12,13 @@ import (
 func signMessage(payload []byte, signingKey jwk.Key) ([]byte, error) {
 	hdrs := jws.NewHeaders()
 	if kid, ok := signingKey.KeyID(); ok && kid != "" {
-		_ = hdrs.Set(jws.KeyIDKey, kid)
+		if err := mustSet(hdrs, jws.KeyIDKey, kid); err != nil {
+			return nil, err
+		}
 	}
-	_ = hdrs.Set(jws.TypeKey, "application/didcomm-signed+json")
+	if err := mustSet(hdrs, jws.TypeKey, "application/didcomm-signed+json"); err != nil {
+		return nil, err
+	}
 
 	signed, err := jws.Sign(
 		payload,

@@ -2,6 +2,7 @@ package didcomm
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -22,13 +23,13 @@ type Message struct {
 // Validate checks that the message has required fields.
 func (m *Message) Validate() error {
 	if m.ID == "" {
-		return ErrInvalidMessage
+		return fmt.Errorf("%w: missing id", ErrInvalidMessage)
 	}
 	if m.Type == "" {
-		return ErrInvalidMessage
+		return fmt.Errorf("%w: missing type", ErrInvalidMessage)
 	}
 	if m.Body == nil {
-		return ErrInvalidMessage
+		return fmt.Errorf("%w: missing body", ErrInvalidMessage)
 	}
 	return nil
 }

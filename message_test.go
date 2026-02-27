@@ -2,6 +2,8 @@ package didcomm
 
 import (
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -38,6 +40,44 @@ func TestMessage_Validate(t *testing.T) {
 			err := tt.msg.Validate()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestMessage_Validate_ErrorMessages(t *testing.T) {
+	tests := []struct {
+		name    string
+		msg     Message
+		wantSub string
+	}{
+		{
+			name:    "missing id",
+			msg:     Message{Type: "test", Body: json.RawMessage(`{}`)},
+			wantSub: "missing id",
+		},
+		{
+			name:    "missing type",
+			msg:     Message{ID: "1", Body: json.RawMessage(`{}`)},
+			wantSub: "missing type",
+		},
+		{
+			name:    "missing body",
+			msg:     Message{ID: "1", Type: "test"},
+			wantSub: "missing body",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.msg.Validate()
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !errors.Is(err, ErrInvalidMessage) {
+				t.Errorf("expected ErrInvalidMessage, got %v", err)
+			}
+			if !strings.Contains(err.Error(), tt.wantSub) {
+				t.Errorf("expected error to contain %q, got %q", tt.wantSub, err.Error())
 			}
 		})
 	}

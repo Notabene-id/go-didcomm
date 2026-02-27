@@ -142,8 +142,32 @@ func TestGenerateDIDWeb_PortInDomain(t *testing.T) {
 	}
 }
 
+func TestGenerateDIDWeb_EmptyDomain(t *testing.T) {
+	_, _, err := GenerateDIDWeb("", "/alice")
+	if !errors.Is(err, ErrInvalidMessage) {
+		t.Fatalf("expected ErrInvalidMessage, got %v", err)
+	}
+}
+
+func TestGenerateDIDWeb_WhitespaceDomain(t *testing.T) {
+	_, _, err := GenerateDIDWeb("example .com", "/alice")
+	if !errors.Is(err, ErrInvalidMessage) {
+		t.Fatalf("expected ErrInvalidMessage, got %v", err)
+	}
+
+	_, _, err = GenerateDIDWeb("example\t.com", "/alice")
+	if !errors.Is(err, ErrInvalidMessage) {
+		t.Fatalf("expected ErrInvalidMessage for tab, got %v", err)
+	}
+
+	_, _, err = GenerateDIDWeb("example\n.com", "/alice")
+	if !errors.Is(err, ErrInvalidMessage) {
+		t.Fatalf("expected ErrInvalidMessage for newline, got %v", err)
+	}
+}
+
 func TestResolver_StoreAndResolve(t *testing.T) {
-	resolver := NewResolver()
+	resolver := NewInMemoryResolver()
 	ctx := context.Background()
 
 	doc, _, err := GenerateDIDKey()
@@ -164,7 +188,7 @@ func TestResolver_StoreAndResolve(t *testing.T) {
 }
 
 func TestResolver_NotFound(t *testing.T) {
-	resolver := NewResolver()
+	resolver := NewInMemoryResolver()
 	ctx := context.Background()
 
 	_, err := resolver.Resolve(ctx, "did:key:nonexistent")

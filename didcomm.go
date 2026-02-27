@@ -20,12 +20,12 @@ type UnpackResult struct {
 
 // Client provides DIDComm v2 pack and unpack operations.
 type Client struct {
-	resolver *Resolver
+	resolver DIDResolver
 	secrets  SecretsResolver
 }
 
 // NewClient creates a new DIDComm client with the given DID resolver and secrets resolver.
-func NewClient(resolver *Resolver, secrets SecretsResolver) *Client {
+func NewClient(resolver DIDResolver, secrets SecretsResolver) *Client {
 	return &Client{
 		resolver: resolver,
 		secrets:  secrets,
@@ -363,8 +363,10 @@ func isJWE(data []byte) bool {
 }
 
 // isJWS checks if the data looks like a JWS (compact serialization).
+// JWS compact is always base64url.base64url.base64url (never starts with '{'),
+// while plain JSON always starts with '{'.
 func isJWS(data []byte) bool {
-	if len(data) == 0 {
+	if len(data) == 0 || data[0] == '{' {
 		return false
 	}
 	// Compact: 3 base64url parts separated by dots
