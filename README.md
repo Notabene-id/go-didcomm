@@ -214,6 +214,7 @@ go test -cover ./...
 ├── authcrypt.go         # Authenticated encryption (sign-then-encrypt)
 ├── sign.go              # JWS signing and verification
 ├── errors.go            # Sentinel errors
+├── cli/                # Exported CLI utilities (shared with tap-go)
 ├── cmd/
 │   └── didcomm/         # CLI tool
 └── internal/

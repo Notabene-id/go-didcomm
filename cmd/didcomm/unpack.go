@@ -1,14 +1,12 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
-	"flag"
-	"fmt"
-	"os"
+
+	"github.com/Notabene-id/go-didcomm/cli"
 )
 
-// unpackOutput is the JSON output format for the unpack command.
+// unpackOutput kept for test backward compatibility.
 type unpackOutput struct {
 	Message   json.RawMessage `json:"message"`
 	Encrypted bool            `json:"encrypted"`
@@ -17,50 +15,5 @@ type unpackOutput struct {
 }
 
 func runUnpack(args []string) error {
-	fs := flag.NewFlagSet("unpack", flag.ContinueOnError)
-	keyFile := fs.String("key-file", "", "path to JWK Set file with private keys (required)")
-	didDoc := fs.String("did-doc", "", "comma-separated DID document file paths")
-	message := fs.String("message", "-", "message input: - (stdin), @file, or inline JSON")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-
-	if *keyFile == "" {
-		return fmt.Errorf("--key-file is required")
-	}
-
-	client, err := buildClient(*keyFile, *didDoc)
-	if err != nil {
-		return err
-	}
-
-	data, err := readMessageInput(*message)
-	if err != nil {
-		return fmt.Errorf("read message: %w", err)
-	}
-
-	result, err := client.Unpack(context.Background(), data)
-	if err != nil {
-		return fmt.Errorf("unpack: %w", err)
-	}
-
-	msgBytes, err := json.Marshal(result.Message)
-	if err != nil {
-		return fmt.Errorf("marshal message: %w", err)
-	}
-
-	out := unpackOutput{
-		Message:   msgBytes,
-		Encrypted: result.Encrypted,
-		Signed:    result.Signed,
-		Anonymous: result.Anonymous,
-	}
-
-	outBytes, err := json.MarshalIndent(out, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal output: %w", err)
-	}
-
-	_, err = fmt.Fprintln(os.Stdout, string(outBytes))
-	return err
+	return cli.RunUnpack(args)
 }
