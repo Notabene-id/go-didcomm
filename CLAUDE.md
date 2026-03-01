@@ -49,14 +49,15 @@ APV (Agreement PartyVInfo) is omitted from JWE headers due to a jwx v3 bug where
 
 ## Pre-push checklist
 
-**Always run both the linter and tests locally before pushing:**
+**Always run formatting, linter, and tests locally before committing/pushing:**
 
 ```bash
+go fmt ./...
 golangci-lint run ./...
 go test ./...
 ```
 
-Fix any lint errors or test failures before pushing. CI runs both checks and will block the PR if either fails.
+Fix any issues before committing. CI runs linter and tests and will block the PR if either fails.
 
 ## Lint rules
 
