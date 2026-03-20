@@ -126,6 +126,7 @@ go install github.com/Notabene-id/go-didcomm/cmd/didcomm@latest
 ```
 didcomm did generate-key [--output-dir <dir>]
 didcomm did generate-web --domain <d> [--path <p>] [--service-endpoint <url>] [--output-dir <dir>]
+didcomm did resolve <did> [--did-doc <f>]
 didcomm pack signed    --key-file <f> [--send] [--did-doc <f>] [--message <m>]
 didcomm pack anoncrypt [--send] [--did-doc <f>] [--message <m>]
 didcomm pack authcrypt --key-file <f> [--send] [--did-doc <f>] [--message <m>]
@@ -149,6 +150,12 @@ didcomm did generate-key --output-dir bob
 ```
 
 This creates `did-doc.json` (public DID document) and `keys.json` (private JWK Set) in each directory.
+
+Resolve a DID document (auto-resolves `did:key` and `did:web`):
+
+```bash
+didcomm did resolve did:web:notabene.id:bq
+```
 
 Create a message and pack it with authenticated encryption (did:key auto-resolves — no `--did-doc` needed):
 
