@@ -319,3 +319,91 @@ func TestVerificationMethod_JSON_RoundTrip(t *testing.T) {
 		t.Fatalf("auth key ID mismatch")
 	}
 }
+
+func TestDIDDocument_UnmarshalJSON_StringReferences(t *testing.T) {
+	// Simulates a real-world DID document where authentication and keyAgreement
+	// contain string references to entries in the verificationMethod array.
+	input := `{
+		"id": "did:web:example.com",
+		"verificationMethod": [
+			{
+				"id": "did:web:example.com#key-1",
+				"type": "Ed25519VerificationKey2018",
+				"controller": "did:web:example.com"
+			},
+			{
+				"id": "did:web:example.com#key-2",
+				"type": "X25519KeyAgreementKey2019",
+				"controller": "did:web:example.com"
+			}
+		],
+		"authentication": [
+			"did:web:example.com#key-1"
+		],
+		"keyAgreement": [
+			"did:web:example.com#key-2"
+		]
+	}`
+
+	var doc DIDDocument
+	if err := json.Unmarshal([]byte(input), &doc); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+
+	if len(doc.VerificationMethod) != 2 {
+		t.Fatalf("expected 2 verification methods, got %d", len(doc.VerificationMethod))
+	}
+	if len(doc.Authentication) != 1 {
+		t.Fatalf("expected 1 authentication, got %d", len(doc.Authentication))
+	}
+	if doc.Authentication[0].ID != "did:web:example.com#key-1" {
+		t.Fatalf("expected key-1, got %s", doc.Authentication[0].ID)
+	}
+	if doc.Authentication[0].Type != "Ed25519VerificationKey2018" {
+		t.Fatalf("expected dereferenced type, got %s", doc.Authentication[0].Type)
+	}
+	if len(doc.KeyAgreement) != 1 {
+		t.Fatalf("expected 1 key agreement, got %d", len(doc.KeyAgreement))
+	}
+	if doc.KeyAgreement[0].ID != "did:web:example.com#key-2" {
+		t.Fatalf("expected key-2, got %s", doc.KeyAgreement[0].ID)
+	}
+}
+
+func TestDIDDocument_UnmarshalJSON_MixedReferencesAndInline(t *testing.T) {
+	input := `{
+		"id": "did:web:example.com",
+		"verificationMethod": [
+			{
+				"id": "did:web:example.com#key-1",
+				"type": "Ed25519VerificationKey2018",
+				"controller": "did:web:example.com"
+			}
+		],
+		"authentication": [
+			"did:web:example.com#key-1",
+			{
+				"id": "did:web:example.com#key-3",
+				"type": "Ed25519VerificationKey2020",
+				"controller": "did:web:example.com"
+			}
+		]
+	}`
+
+	var doc DIDDocument
+	if err := json.Unmarshal([]byte(input), &doc); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+
+	if len(doc.Authentication) != 2 {
+		t.Fatalf("expected 2 authentication entries, got %d", len(doc.Authentication))
+	}
+	// First is dereferenced from verificationMethod
+	if doc.Authentication[0].Type != "Ed25519VerificationKey2018" {
+		t.Fatalf("expected dereferenced type, got %s", doc.Authentication[0].Type)
+	}
+	// Second is inline
+	if doc.Authentication[1].Type != "Ed25519VerificationKey2020" {
+		t.Fatalf("expected inline type, got %s", doc.Authentication[1].Type)
+	}
+}

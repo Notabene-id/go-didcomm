@@ -73,10 +73,88 @@ func (vm *VerificationMethod) UnmarshalJSON(data []byte) error {
 
 // DIDDocument is a thin DID document with only DIDComm-relevant fields.
 type DIDDocument struct {
-	ID             string               `json:"id"`
-	Authentication []VerificationMethod `json:"authentication,omitempty"`
-	KeyAgreement   []VerificationMethod `json:"keyAgreement,omitempty"`
-	Service        []Service            `json:"service,omitempty"`
+	ID                 string               `json:"id"`
+	VerificationMethod []VerificationMethod `json:"verificationMethod,omitempty"`
+	Authentication     []VerificationMethod `json:"authentication,omitempty"`
+	KeyAgreement       []VerificationMethod `json:"keyAgreement,omitempty"`
+	Service            []Service            `json:"service,omitempty"`
+}
+
+// didDocumentJSON is the JSON wire format for DIDDocument.
+type didDocumentJSON struct {
+	ID                 string               `json:"id"`
+	VerificationMethod []VerificationMethod `json:"verificationMethod,omitempty"`
+	Authentication     []json.RawMessage    `json:"authentication,omitempty"`
+	KeyAgreement       []json.RawMessage    `json:"keyAgreement,omitempty"`
+	Service            []Service            `json:"service,omitempty"`
+}
+
+// UnmarshalJSON handles DID document fields where authentication and keyAgreement
+// can contain either inline verification method objects or string references
+// to entries in the verificationMethod array.
+func (doc *DIDDocument) UnmarshalJSON(data []byte) error {
+	var raw didDocumentJSON
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	doc.ID = raw.ID
+	doc.VerificationMethod = raw.VerificationMethod
+	doc.Service = raw.Service
+
+	var err error
+	doc.Authentication, err = resolveVerificationMethods(raw.Authentication, raw.VerificationMethod)
+	if err != nil {
+		return fmt.Errorf("authentication: %w", err)
+	}
+	doc.KeyAgreement, err = resolveVerificationMethods(raw.KeyAgreement, raw.VerificationMethod)
+	if err != nil {
+		return fmt.Errorf("keyAgreement: %w", err)
+	}
+
+	return nil
+}
+
+// resolveVerificationMethods converts a mixed array of string references and inline
+// verification method objects into a slice of VerificationMethod values.
+// String references are resolved against the provided verification methods.
+func resolveVerificationMethods(raw []json.RawMessage, vms []VerificationMethod) ([]VerificationMethod, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+
+	// Build lookup map for string references
+	vmByID := make(map[string]*VerificationMethod, len(vms))
+	for i := range vms {
+		vmByID[vms[i].ID] = &vms[i]
+	}
+
+	result := make([]VerificationMethod, 0, len(raw))
+	for _, entry := range raw {
+		trimmed := strings.TrimSpace(string(entry))
+		if trimmed != "" && trimmed[0] == '"' {
+			// String reference — dereference against verificationMethod array
+			var ref string
+			if err := json.Unmarshal(entry, &ref); err != nil {
+				return nil, fmt.Errorf("parse reference: %w", err)
+			}
+			vm, ok := vmByID[ref]
+			if !ok {
+				// Keep as a stub with just the ID so callers can see the reference
+				result = append(result, VerificationMethod{ID: ref})
+			} else {
+				result = append(result, *vm)
+			}
+		} else {
+			// Inline verification method object
+			var vm VerificationMethod
+			if err := json.Unmarshal(entry, &vm); err != nil {
+				return nil, fmt.Errorf("parse verification method: %w", err)
+			}
+			result = append(result, vm)
+		}
+	}
+	return result, nil
 }
 
 // Service represents a DID document service entry.

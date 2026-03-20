@@ -151,6 +151,79 @@ func TestCLI_DIDGenerateWeb_NoDomain(t *testing.T) {
 	}
 }
 
+func TestCLI_DIDResolve_Key(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+
+	// Generate a did:key identity
+	aliceDir := filepath.Join(dir, "alice")
+	aliceDoc := generateIdentity(t, aliceDir)
+
+	// Resolve the did:key (auto-resolution, no --did-doc needed)
+	cmd := exec.Command(bin, "did", "resolve", aliceDoc.ID)
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("command failed: %s", err)
+	}
+
+	var resolved didcomm.DIDDocument
+	if err := json.Unmarshal(out, &resolved); err != nil {
+		t.Fatalf("invalid JSON output: %s", err)
+	}
+	if resolved.ID != aliceDoc.ID {
+		t.Fatalf("expected %s, got %s", aliceDoc.ID, resolved.ID)
+	}
+}
+
+func TestCLI_DIDResolve_WithDIDDoc(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+
+	// Generate a did:web identity (can't auto-resolve without a server)
+	doc, kp, err := didcomm.GenerateDIDWeb("example.com", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	docBytes, marshalErr := marshalDIDDoc(doc)
+	if marshalErr != nil {
+		t.Fatal(marshalErr)
+	}
+	_ = kp
+
+	docFile := filepath.Join(dir, "did-doc.json")
+	if writeErr := os.WriteFile(docFile, docBytes, 0o644); writeErr != nil {
+		t.Fatal(writeErr)
+	}
+
+	// Resolve using --did-doc override
+	cmd := exec.Command(bin, "did", "resolve", "--did-doc", docFile, doc.ID)
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("command failed: %s", err)
+	}
+
+	var resolved didcomm.DIDDocument
+	if err := json.Unmarshal(out, &resolved); err != nil {
+		t.Fatalf("invalid JSON output: %s", err)
+	}
+	if resolved.ID != doc.ID {
+		t.Fatalf("expected %s, got %s", doc.ID, resolved.ID)
+	}
+}
+
+func TestCLI_DIDResolve_NoDID(t *testing.T) {
+	bin := buildBinary(t)
+	cmd := exec.Command(bin, "did", "resolve")
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatal("expected error when no DID specified")
+	}
+	if !strings.Contains(string(out), "usage:") {
+		t.Fatalf("expected usage error, got: %s", out)
+	}
+}
+
 func TestCLI_PackSigned_Unpack_RoundTrip(t *testing.T) {
 	bin := buildBinary(t)
 	dir := t.TempDir()

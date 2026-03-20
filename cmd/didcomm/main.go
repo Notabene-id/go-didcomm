@@ -15,6 +15,7 @@ Usage:
 Commands:
   did generate-key                                          Generate a did:key identity
   did generate-web --domain <d> [--path <p>]                Generate a did:web identity
+  did resolve <did> [--did-doc <f>]                         Resolve a DID document
   pack signed    --key-file <f> [--send] [--did-doc <f>]    Sign a message (JWS)
   pack anoncrypt [--send] [--did-doc <f>] [--message <m>]   Anonymous encrypt (JWE)
   pack authcrypt --key-file <f> [--send] [--did-doc <f>]    Sign-then-encrypt

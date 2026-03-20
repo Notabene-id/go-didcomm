@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -13,7 +14,7 @@ import (
 // RunDID routes DID subcommands.
 func RunDID(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: did <generate-key|generate-web> [options]")
+		return fmt.Errorf("usage: did <generate-key|generate-web|resolve> [options]")
 	}
 
 	switch args[0] {
@@ -21,6 +22,8 @@ func RunDID(args []string) error {
 		return RunDIDGenerateKey(args[1:])
 	case "generate-web":
 		return RunDIDGenerateWeb(args[1:])
+	case "resolve":
+		return RunDIDResolve(args[1:])
 	default:
 		return fmt.Errorf("unknown did subcommand: %s", args[0])
 	}
@@ -89,6 +92,37 @@ func RunDIDGenerateKey(args []string) error {
 	}
 
 	return WriteGenerateOutput(doc, kp, *outputDir)
+}
+
+// RunDIDResolve resolves a DID and prints its DID document.
+func RunDIDResolve(args []string) error {
+	fs := flag.NewFlagSet("did resolve", flag.ContinueOnError)
+	didDocPaths := fs.String("did-doc", "", "comma-separated DID document file overrides")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	if fs.NArg() == 0 {
+		return fmt.Errorf("usage: did resolve [--did-doc <files>] <did>")
+	}
+	did := fs.Arg(0)
+
+	resolver, err := BuildResolverWithOverrides(*didDocPaths)
+	if err != nil {
+		return err
+	}
+
+	doc, err := resolver.Resolve(context.Background(), did)
+	if err != nil {
+		return fmt.Errorf("resolve %s: %w", did, err)
+	}
+
+	docBytes, err := MarshalDIDDoc(doc)
+	if err != nil {
+		return fmt.Errorf("marshal DID document: %w", err)
+	}
+	fmt.Println(string(docBytes))
+	return nil
 }
 
 // RunDIDGenerateWeb generates a did:web identity.
