@@ -54,10 +54,8 @@ func authcrypt(payload []byte, signingKey jwk.Key, recipientKeys []jwk.Key) ([]b
 	}
 	opts = append(opts, jwe.WithProtectedHeaders(hdrs))
 
-	// Use JSON serialization for multiple recipients
-	if len(recipientKeys) > 1 {
-		opts = append(opts, jwe.WithJSON())
-	}
+	// Always use JSON serialization (required for multiple recipients, preferred for consistency)
+	opts = append(opts, jwe.WithJSON())
 
 	encrypted, err := jwe.Encrypt(signed, opts...)
 	if err != nil {

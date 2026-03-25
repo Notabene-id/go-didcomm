@@ -43,10 +43,8 @@ func anoncrypt(payload []byte, recipientKeys []jwk.Key) ([]byte, error) {
 
 	opts = append(opts, jwe.WithProtectedHeaders(hdrs))
 
-	// Use JSON serialization for multiple recipients
-	if len(recipientKeys) > 1 {
-		opts = append(opts, jwe.WithJSON())
-	}
+	// Always use JSON serialization (required for multiple recipients, preferred for consistency)
+	opts = append(opts, jwe.WithJSON())
 
 	encrypted, err := jwe.Encrypt(payload, opts...)
 	if err != nil {

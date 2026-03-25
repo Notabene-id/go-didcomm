@@ -199,13 +199,15 @@ func SendToRecipient(packed []byte, recipients []string, didDocPaths string) err
 		return fmt.Errorf("read response: %w", err)
 	}
 
-	fmt.Fprintln(os.Stderr, "HTTP "+resp.Status) //nolint:gosec // CLI stderr output
+	fmt.Fprintf(os.Stderr, "HTTP %s\n", resp.Status)
+	if resp.StatusCode >= 400 {
+		if len(body) > 0 {
+			fmt.Fprintf(os.Stderr, "%s\n", body)
+		}
+		return fmt.Errorf("server returned %s", resp.Status)
+	}
 	if len(body) > 0 {
 		_, _ = os.Stdout.Write(body)
-	}
-
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("server returned %s", resp.Status)
 	}
 	return nil
 }
