@@ -9,106 +9,87 @@ import (
 	"github.com/lestrrat-go/jwx/v3/jwa"
 	"github.com/lestrrat-go/jwx/v3/jwk"
 
-	"github.com/Notabene-id/go-didcomm/internal/convert"
+	"github.com/notabene-id/go-didcomm/internal/convert"
 )
 
-// KeyPair holds a signing (Ed25519) and encryption (X25519) key pair with their JWK representations.
-type KeyPair struct {
-	// Ed25519 signing keys (unexported — use JWK accessors)
-	signingPrivate ed25519.PrivateKey
-	signingPublic  ed25519.PublicKey
-
-	// X25519 encryption keys (unexported — use JWK accessors)
-	encryptionPrivate *ecdh.PrivateKey
-	encryptionPublic  *ecdh.PublicKey
-
-	// JWK representations
-	SigningJWK    jwk.Key // OKP Ed25519 private key
-	EncryptionJWK jwk.Key // OKP X25519 private key
+// KeyMaterial is the private key material for a generated DID. It is returned to
+// the caller, who loads it into a KeyStore (see the softkey package for a
+// development store, or a KMS/HSM adapter in production). It is never passed
+// back into the library — the library operates only through the sealed KeyStore.
+type KeyMaterial struct {
+	DID             string `json:"did"`
+	SigningKID      string `json:"signingKid"`      // Ed25519 signing verification-method id
+	KeyAgreementKID string `json:"keyAgreementKid"` // X25519 key-agreement verification-method id
+	Ed25519Seed     []byte `json:"ed25519Seed"`     // 32-byte Ed25519 private seed
+	X25519Private   []byte `json:"x25519Private"`   // 32-byte X25519 private scalar
 }
 
-// jwkSetter is implemented by jwk.Key and JWE/JWS header types.
-type jwkSetter interface {
-	Set(string, interface{}) error
+// generatedKeys is the raw output of key generation.
+type generatedKeys struct {
+	ed25519Seed   []byte
+	ed25519Public ed25519.PublicKey
+	x25519Private []byte
+	x25519Public  []byte
 }
 
-// mustSet sets a JWK/header field and returns an error if it fails.
-func mustSet(setter jwkSetter, key string, value interface{}) error {
-	if err := setter.Set(key, value); err != nil {
-		return fmt.Errorf("set %s: %w", key, err)
-	}
-	return nil
-}
-
-// GenerateKeyPair generates a new Ed25519 signing key pair and derives the corresponding X25519 encryption key pair.
-func GenerateKeyPair() (*KeyPair, error) {
+// generateKeys creates an Ed25519 signing key and derives its X25519
+// key-agreement counterpart (RFC 8032 / RFC 7748).
+func generateKeys() (*generatedKeys, error) {
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("generate ed25519 key: %w", err)
 	}
-
-	return keyPairFromEd25519(pub, priv)
-}
-
-// keyPairFromEd25519 creates a KeyPair from existing Ed25519 keys.
-func keyPairFromEd25519(pub ed25519.PublicKey, priv ed25519.PrivateKey) (*KeyPair, error) {
-	// Convert to X25519
-	x25519PubBytes, err := convert.Ed25519PublicToX25519(pub)
+	xPriv, err := convert.Ed25519PrivateToX25519(priv)
 	if err != nil {
-		return nil, fmt.Errorf("convert public key: %w", err)
+		return nil, fmt.Errorf("derive x25519 private key: %w", err)
 	}
-
-	x25519PrivBytes, err := convert.Ed25519PrivateToX25519(priv)
+	xPub, err := convert.Ed25519PublicToX25519(pub)
 	if err != nil {
-		return nil, fmt.Errorf("convert private key: %w", err)
+		return nil, fmt.Errorf("derive x25519 public key: %w", err)
 	}
-
-	x25519Priv, err := ecdh.X25519().NewPrivateKey(x25519PrivBytes)
-	if err != nil {
-		return nil, fmt.Errorf("create X25519 private key: %w", err)
-	}
-
-	x25519Pub, err := ecdh.X25519().NewPublicKey(x25519PubBytes)
-	if err != nil {
-		return nil, fmt.Errorf("create X25519 public key: %w", err)
-	}
-
-	// Build JWK for signing key
-	sigJWK, err := jwk.Import(priv)
-	if err != nil {
-		return nil, fmt.Errorf("import signing key to JWK: %w", err)
-	}
-	err = mustSet(sigJWK, jwk.AlgorithmKey, jwa.EdDSA())
-	if err != nil {
-		return nil, err
-	}
-
-	// Build JWK for encryption key
-	encJWK, err := jwk.Import(x25519Priv)
-	if err != nil {
-		return nil, fmt.Errorf("import encryption key to JWK: %w", err)
-	}
-	err = mustSet(encJWK, jwk.AlgorithmKey, jwa.ECDH_ES_A256KW())
-	if err != nil {
-		return nil, err
-	}
-
-	return &KeyPair{
-		signingPrivate:    priv,
-		signingPublic:     pub,
-		encryptionPrivate: x25519Priv,
-		encryptionPublic:  x25519Pub,
-		SigningJWK:        sigJWK,
-		EncryptionJWK:     encJWK,
+	return &generatedKeys{
+		ed25519Seed:   priv.Seed(),
+		ed25519Public: pub,
+		x25519Private: xPriv,
+		x25519Public:  xPub,
 	}, nil
 }
 
-// SigningPublicJWK returns the public JWK for the signing key.
-func (kp *KeyPair) SigningPublicJWK() (jwk.Key, error) {
-	return jwk.PublicKeyOf(kp.SigningJWK)
+// signingPublicJWK builds the public Ed25519 JWK for a DID document.
+func signingPublicJWK(pub ed25519.PublicKey, kid string) (jwk.Key, error) {
+	key, err := jwk.Import(pub)
+	if err != nil {
+		return nil, fmt.Errorf("import ed25519 public key: %w", err)
+	}
+	if err := setKeyFields(key, kid, jwa.EdDSA()); err != nil {
+		return nil, err
+	}
+	return key, nil
 }
 
-// EncryptionPublicJWK returns the public JWK for the encryption key.
-func (kp *KeyPair) EncryptionPublicJWK() (jwk.Key, error) {
-	return jwk.PublicKeyOf(kp.EncryptionJWK)
+// encryptionPublicJWK builds the public X25519 JWK for a DID document.
+func encryptionPublicJWK(x25519Public []byte, kid string) (jwk.Key, error) {
+	pub, err := ecdh.X25519().NewPublicKey(x25519Public)
+	if err != nil {
+		return nil, fmt.Errorf("parse x25519 public key: %w", err)
+	}
+	key, err := jwk.Import(pub)
+	if err != nil {
+		return nil, fmt.Errorf("import x25519 public key: %w", err)
+	}
+	if err := setKeyFields(key, kid, jwa.ECDH_ES_A256KW()); err != nil {
+		return nil, err
+	}
+	return key, nil
+}
+
+// setKeyFields sets the kid and alg on a JWK.
+func setKeyFields(key jwk.Key, kid string, alg jwa.KeyAlgorithm) error {
+	if err := key.Set(jwk.KeyIDKey, kid); err != nil {
+		return fmt.Errorf("set kid: %w", err)
+	}
+	if err := key.Set(jwk.AlgorithmKey, alg); err != nil {
+		return fmt.Errorf("set alg: %w", err)
+	}
+	return nil
 }

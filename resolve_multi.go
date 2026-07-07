@@ -6,6 +6,12 @@ import (
 	"strings"
 )
 
+// DID method prefixes routed by DefaultResolver.
+const (
+	methodDIDKey = "did:key"
+	methodDIDWeb = "did:web"
+)
+
 // MultiResolver routes DID resolution to method-specific resolvers based on the DID prefix.
 type MultiResolver struct {
 	resolvers map[string]DIDResolver
@@ -27,8 +33,8 @@ func NewMultiResolver(methods map[string]DIDResolver, fallback DIDResolver) *Mul
 func DefaultResolver() (*MultiResolver, *InMemoryResolver) {
 	mem := NewInMemoryResolver()
 	multi := NewMultiResolver(map[string]DIDResolver{
-		"did:key": &DIDKeyResolver{},
-		"did:web": &DIDWebResolver{},
+		methodDIDKey: &DIDKeyResolver{},
+		methodDIDWeb: &DIDWebResolver{},
 	}, mem)
 	return multi, mem
 }

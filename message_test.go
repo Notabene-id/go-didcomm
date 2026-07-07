@@ -92,7 +92,7 @@ func TestMessage_MarshalJSON(t *testing.T) {
 		To:        []string{"did:key:bob"},
 		CreatedAt: &now,
 		Body:      json.RawMessage(`{"hello":"world"}`),
-		Extra: map[string]interface{}{
+		Extra: map[string]any{
 			"custom_field": "custom_value",
 		},
 	}
@@ -102,7 +102,7 @@ func TestMessage_MarshalJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var raw map[string]interface{}
+	var raw map[string]any
 	if err := json.Unmarshal(data, &raw); err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ func TestMessage_MarshalJSON_OmitsEmptyOptional(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var raw map[string]interface{}
+	var raw map[string]any
 	if err := json.Unmarshal(data, &raw); err != nil {
 		t.Fatal(err)
 	}
@@ -225,5 +225,20 @@ func TestMessage_RoundTrip(t *testing.T) {
 	}
 	if decoded.CreatedAt == nil || decoded.CreatedAt.Unix() != original.CreatedAt.Unix() {
 		t.Errorf("CreatedAt mismatch")
+	}
+}
+
+func TestMessageCreatedTimeStringOrNumber(t *testing.T) {
+	for _, raw := range []string{
+		`{"id":"1","type":"t","body":{},"created_time":1751900000}`,
+		`{"id":"1","type":"t","body":{},"created_time":"1751900000"}`,
+	} {
+		var m Message
+		if err := json.Unmarshal([]byte(raw), &m); err != nil {
+			t.Fatalf("unmarshal %s: %v", raw, err)
+		}
+		if m.CreatedAt == nil || m.CreatedAt.Unix() != 1751900000 {
+			t.Fatalf("created_time not parsed from %s: %v", raw, m.CreatedAt)
+		}
 	}
 }

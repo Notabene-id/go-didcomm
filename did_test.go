@@ -9,7 +9,7 @@ import (
 )
 
 func TestGenerateDIDKey(t *testing.T) {
-	doc, kp, err := GenerateDIDKey()
+	doc, km, err := GenerateDIDKey()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,19 +50,17 @@ func TestGenerateDIDKey(t *testing.T) {
 		t.Fatalf("expected X25519KeyAgreementKey2020, got %s", kaVM.Type)
 	}
 
-	// KeyPair should not be nil
-	if kp == nil {
-		t.Fatal("key pair should not be nil")
+	if km == nil {
+		t.Fatal("key material should not be nil")
 	}
-
-	// Signing JWK should have KID set
-	if kid, ok := kp.SigningJWK.KeyID(); !ok || kid == "" {
-		t.Fatal("signing JWK should have KID set")
+	if km.SigningKID != authVM.ID {
+		t.Fatalf("signing kid %q should match authentication VM %q", km.SigningKID, authVM.ID)
 	}
-
-	// Encryption JWK should have KID set
-	if kid, ok := kp.EncryptionJWK.KeyID(); !ok || kid == "" {
-		t.Fatal("encryption JWK should have KID set")
+	if km.KeyAgreementKID != kaVM.ID {
+		t.Fatalf("key-agreement kid %q should match keyAgreement VM %q", km.KeyAgreementKID, kaVM.ID)
+	}
+	if len(km.Ed25519Seed) != 32 || len(km.X25519Private) != 32 {
+		t.Fatal("key material should carry 32-byte private keys")
 	}
 }
 
@@ -82,7 +80,7 @@ func TestGenerateDIDKey_Unique(t *testing.T) {
 }
 
 func TestGenerateDIDWeb(t *testing.T) {
-	doc, kp, err := GenerateDIDWeb("example.com", "/alice")
+	doc, km, err := GenerateDIDWeb("example.com", "/alice")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,8 +103,8 @@ func TestGenerateDIDWeb(t *testing.T) {
 		t.Fatalf("unexpected ka key ID: %s", doc.KeyAgreement[0].ID)
 	}
 
-	if kp == nil {
-		t.Fatal("key pair should not be nil")
+	if km == nil || km.DID != doc.ID {
+		t.Fatal("key material should not be nil and should carry the DID")
 	}
 }
 

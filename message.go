@@ -1,23 +1,43 @@
 package didcomm
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"time"
 )
 
+// epochSeconds unmarshals a UTC epoch-seconds timestamp from either a JSON
+// number (per the DIDComm v2 spec) or a JSON string (as some peers emit).
+type epochSeconds int64
+
+// UnmarshalJSON accepts a bare or quoted integer.
+func (e *epochSeconds) UnmarshalJSON(data []byte) error {
+	s := string(bytes.Trim(data, `"`))
+	if s == "" || s == "null" {
+		return nil
+	}
+	v, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return fmt.Errorf("parse epoch seconds: %w", err)
+	}
+	*e = epochSeconds(v)
+	return nil
+}
+
 // Message represents a DIDComm v2 message.
 type Message struct {
-	ID        string                 `json:"id"`
-	Type      string                 `json:"type"`
-	From      string                 `json:"from,omitempty"`
-	To        []string               `json:"to,omitempty"`
-	CreatedAt *time.Time             `json:"created_time,omitempty"`
-	ExpiresAt *time.Time             `json:"expires_time,omitempty"`
-	Body      json.RawMessage        `json:"body"`
-	Thid      string                 `json:"thid,omitempty"`
-	Pthid     string                 `json:"pthid,omitempty"`
-	Extra     map[string]interface{} `json:"-"`
+	ID        string          `json:"id"`
+	Type      string          `json:"type"`
+	From      string          `json:"from,omitempty"`
+	To        []string        `json:"to,omitempty"`
+	CreatedAt *time.Time      `json:"created_time,omitempty"`
+	ExpiresAt *time.Time      `json:"expires_time,omitempty"`
+	Body      json.RawMessage `json:"body"`
+	Thid      string          `json:"thid,omitempty"`
+	Pthid     string          `json:"pthid,omitempty"`
+	Extra     map[string]any  `json:"-"`
 }
 
 // Validate checks that the message has required fields.
@@ -37,7 +57,7 @@ func (m *Message) Validate() error {
 // MarshalJSON implements custom JSON marshaling that includes Extra fields.
 func (m *Message) MarshalJSON() ([]byte, error) {
 	// Build a map with known fields
-	msg := make(map[string]interface{})
+	msg := make(map[string]any)
 	msg["id"] = m.ID
 	msg["type"] = m.Type
 	if m.From != "" {
@@ -77,8 +97,8 @@ func (m *Message) UnmarshalJSON(data []byte) error {
 	// Unmarshal known fields using an alias to avoid recursion
 	type Alias Message
 	aux := &struct {
-		CreatedAt *int64 `json:"created_time,omitempty"`
-		ExpiresAt *int64 `json:"expires_time,omitempty"`
+		CreatedAt *epochSeconds `json:"created_time,omitempty"`
+		ExpiresAt *epochSeconds `json:"expires_time,omitempty"`
 		*Alias
 	}{
 		Alias: (*Alias)(m),
@@ -88,11 +108,11 @@ func (m *Message) UnmarshalJSON(data []byte) error {
 	}
 
 	if aux.CreatedAt != nil {
-		t := time.Unix(*aux.CreatedAt, 0).UTC()
+		t := time.Unix(int64(*aux.CreatedAt), 0).UTC()
 		m.CreatedAt = &t
 	}
 	if aux.ExpiresAt != nil {
-		t := time.Unix(*aux.ExpiresAt, 0).UTC()
+		t := time.Unix(int64(*aux.ExpiresAt), 0).UTC()
 		m.ExpiresAt = &t
 	}
 
@@ -111,9 +131,9 @@ func (m *Message) UnmarshalJSON(data []byte) error {
 	for k, v := range raw {
 		if !known[k] {
 			if m.Extra == nil {
-				m.Extra = make(map[string]interface{})
+				m.Extra = make(map[string]any)
 			}
-			var val interface{}
+			var val any
 			if err := json.Unmarshal(v, &val); err != nil {
 				return err
 			}
