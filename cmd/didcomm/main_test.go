@@ -18,6 +18,8 @@ func TestDetectContentType(t *testing.T) {
 		{`{"protected":"x","ciphertext":"y"}`, encryptedMedia},
 		{`{"payload":"p","signature":"s"}`, signedMedia},
 		{`{"id":"1","body":{}}`, plainMedia},
+		{"a.b.c.d.e", encryptedMedia}, // compact JWE
+		{"a.b.c", signedMedia},        // compact JWS
 		{"garbage", plainMedia},
 	}
 	for _, tt := range tests {

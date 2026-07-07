@@ -45,7 +45,7 @@ func (r *DIDWebResolver) Resolve(ctx context.Context, did string) (*DIDDocument,
 
 	client := r.HTTPClient
 	if client == nil {
-		client = guardedHTTPClient(r.AllowLoopback)
+		client = SafeHTTPClient(r.AllowLoopback)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
@@ -82,9 +82,13 @@ func (r *DIDWebResolver) Resolve(ctx context.Context, did string) (*DIDDocument,
 	return &doc, nil
 }
 
-// guardedHTTPClient builds an HTTP client that blocks non-public destinations at
-// dial time, times out, and refuses redirects.
-func guardedHTTPClient(allowLoopback bool) *http.Client {
+// SafeHTTPClient builds an HTTP client hardened against SSRF: it blocks
+// non-public destinations (loopback, private, link-local, and cloud-metadata
+// addresses) at dial time, times out, and refuses redirects. It is used for
+// did:web resolution and is exported so callers that POST to a resolved
+// serviceEndpoint (e.g. delivering a packed message) can apply the same guard.
+// Set allowLoopback for local development.
+func SafeHTTPClient(allowLoopback bool) *http.Client {
 	dialer := &net.Dialer{
 		Timeout: resolveTimeout,
 		Control: func(_, address string, _ syscall.RawConn) error {

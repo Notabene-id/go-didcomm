@@ -242,6 +242,7 @@ func runSend(args []string) error {
 	fs := flag.NewFlagSet("send", flag.ContinueOnError)
 	to := fs.String("to", "", "endpoint URL to POST to (required)")
 	msgFlag := fs.String("message", "-", "message input: - (stdin), @file, or inline JSON")
+	loopback := fs.Bool("allow-loopback", false, "allow POSTing to a loopback address (local dev)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -252,7 +253,7 @@ func runSend(args []string) error {
 	if err != nil {
 		return err
 	}
-	return post(*to, data)
+	return post(*to, data, *loopback)
 }
 
 // clientFor builds a client with a softkey store loaded from a keys.json file.
@@ -318,20 +319,19 @@ func sendToRecipient(packed []byte, recipients []string, loopback bool) error {
 	if err != nil {
 		return fmt.Errorf("recipient %s: %w", recipients[0], err)
 	}
-	return post(endpoint, packed)
+	return post(endpoint, packed, loopback)
 }
 
-// post sends an envelope to an http(s) endpoint with a timeout, no redirects,
-// and a bounded response.
-func post(endpoint string, body []byte) error {
+// post sends an envelope to an http(s) endpoint. It reuses the library's
+// SSRF-guarded client so a serviceEndpoint resolved from a DID document cannot
+// direct the POST to a loopback, private, or metadata address.
+func post(endpoint string, body []byte, allowLoopback bool) error {
 	u, err := url.Parse(endpoint)
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") {
 		return fmt.Errorf("endpoint must be an http(s) URL: %q", endpoint)
 	}
-	client := &http.Client{
-		Timeout:       sendTimeout,
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	}
+	client := didcomm.SafeHTTPClient(allowLoopback)
+	client.Timeout = sendTimeout
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
@@ -368,8 +368,17 @@ func detectContentType(data []byte) string {
 				return signedMedia
 			}
 		}
+		return plainMedia
 	}
-	return plainMedia
+	// Compact serialization: JWE has 4 dots, JWS has 2.
+	switch bytes.Count(trimmed, []byte(".")) {
+	case 4:
+		return encryptedMedia
+	case 2:
+		return signedMedia
+	default:
+		return plainMedia
+	}
 }
 
 func fail(msg string) {
