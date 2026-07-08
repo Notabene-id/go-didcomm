@@ -2,21 +2,30 @@ package didcomm
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
 
-	"github.com/lestrrat-go/jwx/v3/jwa"
 	"github.com/lestrrat-go/jwx/v3/jwk"
 	"github.com/mr-tron/base58"
 )
 
-// Multicodec prefixes for did:key
+// Multicodec prefixes for did:key.
 const (
 	multicodecEd25519 = 0xed
 	multicodecX25519  = 0xec
+)
+
+// Verification-method types this library emits, plus the legacy 2018/2019 types
+// it still accepts when parsing documents from older peers (W3C DID registry).
+const (
+	vmTypeEd25519       = "Ed25519VerificationKey2020"
+	vmTypeX25519        = "X25519KeyAgreementKey2020"
+	vmTypeEd25519Legacy = "Ed25519VerificationKey2018"
+	vmTypeX25519Legacy  = "X25519KeyAgreementKey2019"
 )
 
 // VerificationMethod represents a DID document verification method.
@@ -27,12 +36,15 @@ type VerificationMethod struct {
 	PublicKey  jwk.Key `json:"-"`
 }
 
-// verificationMethodJSON is the JSON wire format with publicKeyJwk.
+// verificationMethodJSON is the JSON wire format. It accepts publicKeyJwk,
+// publicKeyBase58, and publicKeyMultibase key encodings.
 type verificationMethodJSON struct {
-	ID           string          `json:"id"`
-	Type         string          `json:"type"`
-	Controller   string          `json:"controller"`
-	PublicKeyJWK json.RawMessage `json:"publicKeyJwk,omitempty"`
+	ID                 string          `json:"id"`
+	Type               string          `json:"type"`
+	Controller         string          `json:"controller"`
+	PublicKeyJWK       json.RawMessage `json:"publicKeyJwk,omitempty"`
+	PublicKeyBase58    string          `json:"publicKeyBase58,omitempty"`
+	PublicKeyMultibase string          `json:"publicKeyMultibase,omitempty"`
 }
 
 // MarshalJSON serializes a VerificationMethod including publicKeyJwk.
@@ -61,14 +73,85 @@ func (vm *VerificationMethod) UnmarshalJSON(data []byte) error {
 	vm.ID = raw.ID
 	vm.Type = raw.Type
 	vm.Controller = raw.Controller
-	if len(raw.PublicKeyJWK) > 0 {
-		key, err := jwk.ParseKey(raw.PublicKeyJWK)
-		if err != nil {
-			return fmt.Errorf("parse publicKeyJwk for %s: %w", raw.ID, err)
-		}
-		vm.PublicKey = key
+
+	// A verification method may legitimately carry no inline key (e.g. a bare
+	// reference), in which case PublicKey stays nil.
+	if !raw.hasKeyMaterial() {
+		return nil
 	}
+	key, err := raw.publicKey()
+	if err != nil {
+		return fmt.Errorf("verification method %s: %w", raw.ID, err)
+	}
+	vm.PublicKey = key
 	return nil
+}
+
+// hasKeyMaterial reports whether any public-key encoding is present.
+func (raw *verificationMethodJSON) hasKeyMaterial() bool {
+	return len(raw.PublicKeyJWK) > 0 || raw.PublicKeyBase58 != "" || raw.PublicKeyMultibase != ""
+}
+
+// publicKey decodes the verification method's public key. The caller must first
+// confirm key material is present via hasKeyMaterial.
+func (raw *verificationMethodJSON) publicKey() (jwk.Key, error) {
+	switch {
+	case len(raw.PublicKeyJWK) > 0:
+		return jwk.ParseKey(raw.PublicKeyJWK)
+	case raw.PublicKeyBase58 != "":
+		decoded, err := base58.Decode(raw.PublicKeyBase58)
+		if err != nil {
+			return nil, fmt.Errorf("decode publicKeyBase58: %w", err)
+		}
+		return publicKeyFromBytes(raw.Type, decoded, raw.ID)
+	default:
+		return publicKeyFromMultibase(raw.PublicKeyMultibase, raw.ID)
+	}
+}
+
+// publicKeyFromBytes builds a JWK from raw key bytes, choosing the curve from
+// the verification-method type.
+func publicKeyFromBytes(vmType string, raw []byte, kid string) (jwk.Key, error) {
+	switch vmType {
+	case vmTypeEd25519, vmTypeEd25519Legacy:
+		if len(raw) != ed25519.PublicKeySize {
+			return nil, ErrUnsupportedKeyType
+		}
+		return signingPublicJWK(ed25519.PublicKey(raw), kid)
+	case vmTypeX25519, vmTypeX25519Legacy:
+		if len(raw) != 32 {
+			return nil, ErrUnsupportedKeyType
+		}
+		return encryptionPublicJWK(raw, kid)
+	default:
+		return nil, ErrUnsupportedKeyType
+	}
+}
+
+// publicKeyFromMultibase decodes a base58-btc multibase multicodec key.
+func publicKeyFromMultibase(multibase, kid string) (jwk.Key, error) {
+	if len(multibase) < 2 || multibase[0] != 'z' {
+		return nil, ErrUnsupportedKeyType
+	}
+	decoded, err := base58.Decode(multibase[1:])
+	if err != nil {
+		return nil, fmt.Errorf("decode publicKeyMultibase: %w", err)
+	}
+	codec, n := binary.Uvarint(decoded)
+	if n <= 0 {
+		return nil, ErrUnsupportedKeyType
+	}
+	switch codec {
+	case multicodecEd25519:
+		if len(decoded[n:]) != ed25519.PublicKeySize {
+			return nil, ErrUnsupportedKeyType
+		}
+		return signingPublicJWK(ed25519.PublicKey(decoded[n:]), kid)
+	case multicodecX25519:
+		return encryptionPublicJWK(decoded[n:], kid)
+	default:
+		return nil, ErrUnsupportedKeyType
+	}
 }
 
 // DIDDocument is a thin DID document with only DIDComm-relevant fields.
@@ -164,30 +247,26 @@ type Service struct {
 	ServiceEndpoint string `json:"serviceEndpoint"`
 }
 
-// GenerateDIDKey generates a new did:key with Ed25519 signing and X25519 encryption keys.
-func GenerateDIDKey() (*DIDDocument, *KeyPair, error) {
-	kp, err := GenerateKeyPair()
+// GenerateDIDKey generates a new did:key with an Ed25519 signing key and its
+// derived X25519 key-agreement key. It returns the public DID document and the
+// private KeyMaterial for the caller to load into a KeyStore.
+func GenerateDIDKey() (*DIDDocument, *KeyMaterial, error) {
+	gk, err := generateKeys()
 	if err != nil {
 		return nil, nil, err
 	}
 
-	// Encode Ed25519 public key with multicodec prefix
-	did := encodeDIDKey(multicodecEd25519, kp.signingPublic)
+	did := encodeDIDKey(multicodecEd25519, gk.ed25519Public)
+	sigKID := did + "#" + did[len("did:key:"):]
+	encKID := did + "#" + encodeDIDKeyFragment(multicodecX25519, gk.x25519Public)
 
-	// Build signing verification method key ID
-	sigFragment := did[len("did:key:"):]
-	sigKID := did + "#" + sigFragment
-
-	// Build encryption key fragment from X25519 public key
-	encFragment := encodeDIDKeyFragment(multicodecX25519, kp.encryptionPublic.Bytes())
-	encKID := did + "#" + encFragment
-
-	return buildDIDDocument(did, sigKID, encKID, kp)
+	return buildDIDDocument(did, sigKID, encKID, gk)
 }
 
-// GenerateDIDWeb generates a did:web with Ed25519/X25519 keys.
-// The caller is responsible for hosting the returned DID document at the appropriate URL.
-func GenerateDIDWeb(domain, path string) (*DIDDocument, *KeyPair, error) {
+// GenerateDIDWeb generates a did:web with an Ed25519 signing key and its derived
+// X25519 key-agreement key. The caller hosts the returned document at the
+// resolved URL and loads the KeyMaterial into a KeyStore.
+func GenerateDIDWeb(domain, path string) (*DIDDocument, *KeyMaterial, error) {
 	if domain == "" {
 		return nil, nil, fmt.Errorf("%w: empty domain", ErrInvalidMessage)
 	}
@@ -195,59 +274,28 @@ func GenerateDIDWeb(domain, path string) (*DIDDocument, *KeyPair, error) {
 		return nil, nil, fmt.Errorf("%w: domain contains whitespace", ErrInvalidMessage)
 	}
 
-	kp, err := GenerateKeyPair()
+	gk, err := generateKeys()
 	if err != nil {
 		return nil, nil, err
 	}
 
-	// Build did:web identifier
 	did := "did:web:" + strings.ReplaceAll(domain, ":", "%3A")
 	if path != "" {
-		// Replace / with : in path (per did:web spec)
-		cleaned := strings.TrimPrefix(path, "/")
-		parts := strings.Split(cleaned, "/")
+		parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
 		did += ":" + strings.Join(parts, ":")
 	}
 
-	sigKID := did + "#key-1"
-	encKID := did + "#key-2"
-
-	return buildDIDDocument(did, sigKID, encKID, kp)
+	return buildDIDDocument(did, did+"#key-1", did+"#key-2", gk)
 }
 
-// buildDIDDocument constructs a DIDDocument from a DID string, key IDs, and key pair.
-func buildDIDDocument(did, sigKID, encKID string, kp *KeyPair) (*DIDDocument, *KeyPair, error) {
-	err := mustSet(kp.SigningJWK, jwk.KeyIDKey, sigKID)
+// buildDIDDocument assembles a DID document and the matching KeyMaterial from
+// generated keys and the chosen verification-method ids.
+func buildDIDDocument(did, sigKID, encKID string, gk *generatedKeys) (*DIDDocument, *KeyMaterial, error) {
+	sigPubJWK, err := signingPublicJWK(gk.ed25519Public, sigKID)
 	if err != nil {
 		return nil, nil, err
 	}
-	err = mustSet(kp.EncryptionJWK, jwk.KeyIDKey, encKID)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	sigPubJWK, err := kp.SigningPublicJWK()
-	if err != nil {
-		return nil, nil, fmt.Errorf("derive signing public JWK: %w", err)
-	}
-	err = mustSet(sigPubJWK, jwk.KeyIDKey, sigKID)
-	if err != nil {
-		return nil, nil, err
-	}
-	err = mustSet(sigPubJWK, jwk.AlgorithmKey, jwa.EdDSA())
-	if err != nil {
-		return nil, nil, err
-	}
-
-	encPubJWK, err := kp.EncryptionPublicJWK()
-	if err != nil {
-		return nil, nil, fmt.Errorf("derive encryption public JWK: %w", err)
-	}
-	err = mustSet(encPubJWK, jwk.KeyIDKey, encKID)
-	if err != nil {
-		return nil, nil, err
-	}
-	err = mustSet(encPubJWK, jwk.AlgorithmKey, jwa.ECDH_ES_A256KW())
+	encPubJWK, err := encryptionPublicJWK(gk.x25519Public, encKID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -255,24 +303,20 @@ func buildDIDDocument(did, sigKID, encKID string, kp *KeyPair) (*DIDDocument, *K
 	doc := &DIDDocument{
 		ID: did,
 		Authentication: []VerificationMethod{
-			{
-				ID:         sigKID,
-				Type:       "Ed25519VerificationKey2020",
-				Controller: did,
-				PublicKey:  sigPubJWK,
-			},
+			{ID: sigKID, Type: vmTypeEd25519, Controller: did, PublicKey: sigPubJWK},
 		},
 		KeyAgreement: []VerificationMethod{
-			{
-				ID:         encKID,
-				Type:       "X25519KeyAgreementKey2020",
-				Controller: did,
-				PublicKey:  encPubJWK,
-			},
+			{ID: encKID, Type: vmTypeX25519, Controller: did, PublicKey: encPubJWK},
 		},
 	}
-
-	return doc, kp, nil
+	km := &KeyMaterial{
+		DID:             did,
+		SigningKID:      sigKID,
+		KeyAgreementKID: encKID,
+		Ed25519Seed:     gk.ed25519Seed,
+		X25519Private:   gk.x25519Private,
+	}
+	return doc, km, nil
 }
 
 // encodeDIDKey creates a did:key identifier from a multicodec prefix and public key bytes.

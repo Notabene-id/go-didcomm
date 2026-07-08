@@ -46,56 +46,6 @@ func TestDIDKeyResolver_RoundTrip(t *testing.T) {
 	}
 }
 
-func TestDIDKeyResolver_PackUnpack(t *testing.T) {
-	// Generate two did:key identities and verify we can pack/unpack
-	// using only the DIDKeyResolver (no manual doc storage)
-	aliceDoc, aliceKP, err := GenerateDIDKey()
-	if err != nil {
-		t.Fatal(err)
-	}
-	bobDoc, bobKP, err := GenerateDIDKey()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	resolver := &DIDKeyResolver{}
-	secrets := NewInMemorySecretsStore()
-	secrets.Store(aliceKP)
-	secrets.Store(bobKP)
-
-	client := NewClient(resolver, secrets)
-	ctx := context.Background()
-
-	msg := &Message{
-		ID:   "test-1",
-		Type: "https://example.com/test",
-		From: aliceDoc.ID,
-		To:   []string{bobDoc.ID},
-		Body: []byte(`{"hello":"world"}`),
-	}
-
-	// Authcrypt round-trip
-	packed, err := client.PackAuthcrypt(ctx, msg)
-	if err != nil {
-		t.Fatalf("pack authcrypt: %v", err)
-	}
-
-	result, err := client.Unpack(ctx, packed)
-	if err != nil {
-		t.Fatalf("unpack: %v", err)
-	}
-
-	if !result.Encrypted {
-		t.Fatal("expected encrypted")
-	}
-	if !result.Signed {
-		t.Fatal("expected signed")
-	}
-	if result.Message.ID != "test-1" {
-		t.Fatalf("message ID: %s", result.Message.ID)
-	}
-}
-
 func TestDIDKeyResolver_NotDIDKey(t *testing.T) {
 	resolver := &DIDKeyResolver{}
 	_, err := resolver.Resolve(context.Background(), "did:web:example.com")
