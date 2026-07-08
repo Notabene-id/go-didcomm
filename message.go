@@ -26,6 +26,27 @@ func (e *epochSeconds) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// recipients unmarshals the "to" field from either an array (per the DIDComm v2
+// spec) or a bare string. Veramo emits a string because @veramo/did-comm types
+// IDIDCommMessage.to as a single recipient and its wrapper splits multi-recipient
+// messages into one envelope each.
+type recipients []string
+
+// UnmarshalJSON accepts a JSON array of strings or a single string.
+func (r *recipients) UnmarshalJSON(data []byte) error {
+	var arr []string
+	if err := json.Unmarshal(data, &arr); err == nil {
+		*r = arr
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return fmt.Errorf("to: neither a string nor an array of strings: %w", err)
+	}
+	*r = recipients{s}
+	return nil
+}
+
 // Message represents a DIDComm v2 message.
 type Message struct {
 	ID        string          `json:"id"`
@@ -99,6 +120,7 @@ func (m *Message) UnmarshalJSON(data []byte) error {
 	aux := &struct {
 		CreatedAt *epochSeconds `json:"created_time,omitempty"`
 		ExpiresAt *epochSeconds `json:"expires_time,omitempty"`
+		To        *recipients   `json:"to,omitempty"`
 		*Alias
 	}{
 		Alias: (*Alias)(m),
@@ -107,6 +129,9 @@ func (m *Message) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
+	if aux.To != nil {
+		m.To = *aux.To
+	}
 	if aux.CreatedAt != nil {
 		t := time.Unix(int64(*aux.CreatedAt), 0).UTC()
 		m.CreatedAt = &t
