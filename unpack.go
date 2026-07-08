@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"slices"
+	"time"
 
 	"github.com/lestrrat-go/jwx/v3/jwk"
 
@@ -37,7 +38,19 @@ func (c *Client) UnpackUnverified(ctx context.Context, envelope []byte) (*Messag
 }
 
 func (c *Client) unpack(ctx context.Context, envelope []byte, allowUnauthenticated bool) (*Message, *Metadata, error) {
-	envelope = bytes.TrimSpace(envelope)
+	msg, meta, err := c.unpackClassified(ctx, bytes.TrimSpace(envelope), allowUnauthenticated)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := checkNotExpired(msg); err != nil {
+		return nil, nil, err
+	}
+	return msg, meta, nil
+}
+
+func (c *Client) unpackClassified(
+	ctx context.Context, envelope []byte, allowUnauthenticated bool,
+) (*Message, *Metadata, error) {
 	switch classify(envelope) {
 	case classJWE:
 		return c.unpackEncrypted(ctx, envelope, allowUnauthenticated)
@@ -53,6 +66,16 @@ func (c *Client) unpack(ctx context.Context, envelope []byte, allowUnauthenticat
 		}
 		return msg, &Metadata{Mode: ModePlain}, nil
 	}
+}
+
+// checkNotExpired rejects a message whose expires_time has passed. DIDComm
+// leaves enforcement to the recipient; doing it here means a stale or replayed
+// envelope never reaches application code as if it were fresh.
+func checkNotExpired(msg *Message) error {
+	if msg.ExpiresAt != nil && time.Now().After(*msg.ExpiresAt) {
+		return ErrMessageExpired
+	}
+	return nil
 }
 
 // unpackSigned verifies a standalone JWS and binds the signer to the message's
@@ -99,6 +122,10 @@ func (c *Client) unpackEncrypted(
 	}
 
 	authcrypt := p.Header.Alg == jose.AlgECDH1PUA256KW
+	if !validKDFHeaders(p, authcrypt) {
+		return nil, nil, ErrDecryptFailed
+	}
+
 	var senderStaticPub []byte
 	if authcrypt {
 		if p.Header.SKID == "" {
@@ -250,6 +277,25 @@ func openTrial(p *jose.ParsedJWE, encryptedKey, z []byte, authcrypt bool) ([]byt
 		}
 	}
 	return nil, 0, false
+}
+
+// validKDFHeaders enforces the DIDComm v2 key-derivation binding headers. The
+// "apv" MUST hash the exact recipient set present in the envelope, and for
+// authcrypt "apu" MUST carry the skid. Both fields are also covered by the
+// content AAD, but the spec requires them to be present and correct, so a
+// mismatch (including a peer that omits them) is rejected. Anoncrypt omits apu.
+func validKDFHeaders(p *jose.ParsedJWE, authcrypt bool) bool {
+	kids := make([]string, len(p.Recipients))
+	for i, r := range p.Recipients {
+		kids[i] = r.KID
+	}
+	if p.Header.APV != b64.EncodeToString(didcommAPV(kids)) {
+		return false
+	}
+	if authcrypt && p.Header.APU != b64.EncodeToString([]byte(p.Header.SKID)) {
+		return false
+	}
+	return true
 }
 
 // keyAgreementPublic resolves the X25519 public key for a key-agreement kid.

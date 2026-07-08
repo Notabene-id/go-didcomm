@@ -37,7 +37,7 @@ func aesKeyWrap(kek, plaintext []byte) ([]byte, error) {
 			copy(b[8:], r[(i-1)*8:i*8])
 			block.Encrypt(b[:], b[:])
 
-			t := uint64(n*j + i)
+			t := uint64(n*j + i) //nolint:gosec // RFC 3394 round counter; n*j+i is small and non-negative
 			copy(a, b[:8])
 			binary.BigEndian.PutUint64(a, binary.BigEndian.Uint64(a)^t)
 			copy(r[(i-1)*8:i*8], b[8:])

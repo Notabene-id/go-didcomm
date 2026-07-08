@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **DIDComm v2 key-derivation binding (`apu`/`apv`) is now emitted.** Previously
+  the encryption layer left `apu` and `apv` empty, so the Concat KDF `OtherInfo`
+  did not match what any compliant peer computes. This made every encrypted
+  envelope this library produced — including the default `ProfileSignedAnoncrypt`
+  — undecryptable by Veramo, didcomm-rust, ACA-Py and other DIDComm v2 peers, and
+  was not caught because the tests only round-tripped against themselves. `Pack`
+  now sets `apv = base64url(SHA-256(sorted recipient kids joined by "."))` for all
+  encrypted profiles and `apu = base64url(skid)` for authcrypt, per aries-rfc 0334
+  and DIDComm Messaging v2.
+- **`Unpack` validates the inbound `apu`/`apv` binding.** `apv` must hash the
+  exact recipient set in the envelope, and for authcrypt `apu` must equal
+  `base64url(skid)`; a mismatch or omission is rejected with the opaque
+  `ErrDecryptFailed`.
+- **`Unpack` enforces `expires_time`.** An expired message is rejected with the
+  new `ErrMessageExpired` instead of being returned as if fresh.
+
+### Added
+- `serviceEndpoint` now parses the string, object (`{"uri": …}`), and array forms
+  the DID and DIDComm v2 specs allow, not just a bare string.
+- Conformance tests: an independent known-answer vector for the `apv` derivation,
+  header-shape assertions on packed envelopes, an inbound apv/apu-binding test,
+  an end-to-end surreptitious-forwarding rejection, and expiry coverage.
+
+### Note
+- The 0.5.0 entry below claimed authcrypt was "interoperable with Veramo … and
+  verified against a captured Veramo interop fixture." No such fixture existed and
+  the `apu`/`apv` defect above prevented real interoperability. Cross-implementation
+  interop should be re-verified against an external peer before that claim is made
+  again.
+
 ## [0.5.0] - 2026-07-07
 
 A security-driven rewrite. **Breaking**: the module path, the key interface, and

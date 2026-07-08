@@ -53,4 +53,8 @@ var (
 	// ErrRecipientMismatch is returned when this recipient is not listed in the
 	// message's "to", which would indicate a forwarded or misdirected message.
 	ErrRecipientMismatch = errors.New("didcomm: recipient not in message addressees")
+
+	// ErrMessageExpired is returned by Unpack when a message's expires_time has
+	// already passed.
+	ErrMessageExpired = errors.New("didcomm: message has expired")
 )

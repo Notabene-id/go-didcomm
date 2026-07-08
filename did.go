@@ -247,6 +247,51 @@ type Service struct {
 	ServiceEndpoint string `json:"serviceEndpoint"`
 }
 
+// UnmarshalJSON accepts the three serviceEndpoint shapes the DID and DIDComm v2
+// specs permit: a bare URI string, an object with a "uri" field (optionally with
+// accept/routingKeys), or an array of either. The first usable URI is kept.
+func (s *Service) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		ID              string          `json:"id"`
+		Type            string          `json:"type"`
+		ServiceEndpoint json.RawMessage `json:"serviceEndpoint"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	s.ID = raw.ID
+	s.Type = raw.Type
+	s.ServiceEndpoint = firstServiceEndpointURI(raw.ServiceEndpoint)
+	return nil
+}
+
+// firstServiceEndpointURI extracts the first endpoint URI from a serviceEndpoint
+// value in string, object, or array form. It returns "" when none is present.
+func firstServiceEndpointURI(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var str string
+	if json.Unmarshal(raw, &str) == nil {
+		return str
+	}
+	var obj struct {
+		URI string `json:"uri"`
+	}
+	if json.Unmarshal(raw, &obj) == nil && obj.URI != "" {
+		return obj.URI
+	}
+	var arr []json.RawMessage
+	if json.Unmarshal(raw, &arr) == nil {
+		for _, entry := range arr {
+			if uri := firstServiceEndpointURI(entry); uri != "" {
+				return uri
+			}
+		}
+	}
+	return ""
+}
+
 // GenerateDIDKey generates a new did:key with an Ed25519 signing key and its
 // derived X25519 key-agreement key. It returns the public DID document and the
 // private KeyMaterial for the caller to load into a KeyStore.

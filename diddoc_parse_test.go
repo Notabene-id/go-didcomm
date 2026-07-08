@@ -90,6 +90,38 @@ func TestVerificationMethodMultibase(t *testing.T) {
 	}
 }
 
+// TestServiceEndpointForms confirms the string, object, and array serviceEndpoint
+// shapes all resolve to a usable DIDCommMessaging URI (DID core / DIDComm v2).
+func TestServiceEndpointForms(t *testing.T) {
+	cases := []struct {
+		name     string
+		endpoint string
+		want     string
+	}{
+		{"string", `"https://a.example/didcomm"`, "https://a.example/didcomm"},
+		{"object", `{"uri":"https://b.example/didcomm","accept":["didcomm/v2"]}`, "https://b.example/didcomm"},
+		{"array of objects", `[{"uri":"https://c.example/didcomm"}]`, "https://c.example/didcomm"},
+		{"array of strings", `["https://d.example/didcomm"]`, "https://d.example/didcomm"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := `{"id":"did:web:x","service":[{"id":"did:web:x#dc",` +
+				`"type":"DIDCommMessaging","serviceEndpoint":` + tc.endpoint + `}]}`
+			var parsed DIDDocument
+			if err := json.Unmarshal([]byte(doc), &parsed); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			got, err := parsed.FindDIDCommEndpoint()
+			if err != nil {
+				t.Fatalf("FindDIDCommEndpoint: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("endpoint = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestVerificationMethodRejectsBadBase58(t *testing.T) {
 	doc := `{"id":"did:web:x","authentication":[{"id":"did:web:x#k",` +
 		`"type":"Ed25519VerificationKey2018","publicKeyBase58":"!!!notbase58!!!"}]}`
