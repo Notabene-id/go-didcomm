@@ -242,3 +242,30 @@ func TestMessageCreatedTimeStringOrNumber(t *testing.T) {
 		}
 	}
 }
+
+func TestMessageToStringOrArray(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want []string
+	}{
+		{"array", `{"id":"1","type":"t","body":{},"to":["did:web:a","did:web:b"]}`, []string{"did:web:a", "did:web:b"}},
+		{"string (Veramo)", `{"id":"1","type":"t","body":{},"to":"did:web:a"}`, []string{"did:web:a"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var m Message
+			if err := json.Unmarshal([]byte(tc.raw), &m); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if len(m.To) != len(tc.want) {
+				t.Fatalf("to = %v, want %v", m.To, tc.want)
+			}
+			for i := range tc.want {
+				if m.To[i] != tc.want[i] {
+					t.Fatalf("to[%d] = %q, want %q", i, m.To[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
