@@ -43,6 +43,8 @@ func decryptContent(enc ContentEncryption, cek, iv, ciphertext, tag, aad []byte)
 		return decryptA256CBCHS512(cek, iv, ciphertext, tag, aad)
 	case EncA256GCM:
 		return decryptA256GCM(cek, iv, ciphertext, tag, aad)
+	case EncXC20P:
+		return decryptXC20P(cek, iv, ciphertext, tag, aad)
 	default:
 		return nil, ErrDecrypt
 	}

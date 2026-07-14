@@ -47,7 +47,8 @@ func TestOpenRecipientWrongKeyFailsOpaque(t *testing.T) {
 		Ciphertext:   []byte("x"),
 		Tag:          make([]byte, 16),
 	}
-	if _, err := OpenRecipient(p, make([]byte, 40), make([]byte, 32), false); !errors.Is(err, ErrDecrypt) {
+	r := &ParsedRecipient{Alg: AlgECDHESA256KW, EncryptedKey: make([]byte, 40)}
+	if _, err := OpenRecipient(p, r, make([]byte, 32), false); !errors.Is(err, ErrDecrypt) {
 		t.Fatalf("OpenRecipient err = %v, want ErrDecrypt", err)
 	}
 }

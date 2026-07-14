@@ -19,16 +19,23 @@ type ContentEncryption string
 // Serialization selects how a JWE is rendered on the wire.
 type Serialization uint8
 
-// JWE key-management ("alg") values supported by this package.
+// JWE key-management ("alg") values supported by this package. XC20PKW
+// (draft-amringer-jose-chacha-02) is accepted on unpack for interoperability
+// with DIDComm implementations that use XChaCha20-Poly1305; this package only
+// ever emits A256KW.
 const (
-	AlgECDH1PUA256KW KeyWrapAlgorithm = "ECDH-1PU+A256KW"
-	AlgECDHESA256KW  KeyWrapAlgorithm = "ECDH-ES+A256KW"
+	AlgECDH1PUA256KW  KeyWrapAlgorithm = "ECDH-1PU+A256KW"
+	AlgECDH1PUXC20PKW KeyWrapAlgorithm = "ECDH-1PU+XC20PKW"
+	AlgECDHESA256KW   KeyWrapAlgorithm = "ECDH-ES+A256KW"
 )
 
-// JWE content-encryption ("enc") values supported by this package.
+// JWE content-encryption ("enc") values supported by this package. XC20P
+// (XChaCha20-Poly1305) is accepted on unpack for the same interoperability; this
+// package only ever emits A256GCM.
 const (
 	EncA256CBCHS512 ContentEncryption = "A256CBC-HS512"
 	EncA256GCM      ContentEncryption = "A256GCM"
+	EncXC20P        ContentEncryption = "XC20P"
 )
 
 // JWE serialization forms (RFC 7516 §3).
@@ -56,9 +63,15 @@ func (enc ContentEncryption) cekSize() (int, bool) {
 	switch enc {
 	case EncA256CBCHS512:
 		return 64, true
-	case EncA256GCM:
+	case EncA256GCM, EncXC20P:
 		return 32, true
 	default:
 		return 0, false
 	}
+}
+
+// IsAuthcrypt reports whether alg is an ECDH-1PU (authenticated-sender) key
+// agreement, regardless of the key-wrap it is paired with.
+func IsAuthcrypt(alg KeyWrapAlgorithm) bool {
+	return alg == AlgECDH1PUA256KW || alg == AlgECDH1PUXC20PKW
 }

@@ -25,7 +25,7 @@ type jwsHeader struct {
 }
 
 // jwsFlattened is the flattened JSON JWS serialization DIDComm mandates
-// (RFC 7515 §7.2.2); Veramo and other v2 peers reject compact input.
+// (RFC 7515 §7.2.2); some DIDComm v2 implementations reject compact input.
 type jwsFlattened struct {
 	Payload   string `json:"payload"`
 	Protected string `json:"protected"`

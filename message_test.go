@@ -250,7 +250,7 @@ func TestMessageToStringOrArray(t *testing.T) {
 		want []string
 	}{
 		{"array", `{"id":"1","type":"t","body":{},"to":["did:web:a","did:web:b"]}`, []string{"did:web:a", "did:web:b"}},
-		{"string (Veramo)", `{"id":"1","type":"t","body":{},"to":"did:web:a"}`, []string{"did:web:a"}},
+		{"bare string", `{"id":"1","type":"t","body":{},"to":"did:web:a"}`, []string{"did:web:a"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

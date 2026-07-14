@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/ecdh"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"testing"
 )
@@ -76,7 +77,7 @@ func TestEnvelopeRoundTrip(t *testing.T) {
 				openZ = append(append([]byte{}, openZ...), zs...)
 			}
 
-			got, err := OpenRecipient(p, p.Recipients[0].EncryptedKey, openZ, tc.bindTag)
+			got, err := OpenRecipient(p, &p.Recipients[0], openZ, tc.bindTag)
 			if err != nil {
 				t.Fatalf("OpenRecipient: %v", err)
 			}
@@ -86,7 +87,7 @@ func TestEnvelopeRoundTrip(t *testing.T) {
 
 			// Wrong z must fail closed with the opaque error.
 			wrong := make([]byte, len(openZ))
-			if _, err := OpenRecipient(p, p.Recipients[0].EncryptedKey, wrong, tc.bindTag); !errors.Is(err, ErrDecrypt) {
+			if _, err := OpenRecipient(p, &p.Recipients[0], wrong, tc.bindTag); !errors.Is(err, ErrDecrypt) {
 				t.Fatalf("wrong-z err = %v, want ErrDecrypt", err)
 			}
 		})
@@ -118,4 +119,80 @@ func mustDecode(t *testing.T, s string) []byte {
 		t.Fatalf("b64 %q: %v", s, err)
 	}
 	return b
+}
+
+func mustJSON(t *testing.T, v any) []byte {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return b
+}
+
+// TestParsePerRecipientHeaderOverrides covers the per-recipient-header shape:
+// alg/epk and the XC20PKW key-wrap iv/tag live in the per-recipient header, with
+// only enc in the protected header. Parse must resolve them onto the recipient.
+func TestParsePerRecipientHeaderOverrides(t *testing.T) {
+	protected := b64.EncodeToString(mustJSON(t, Header{Enc: EncXC20P}))
+	env := mustJSON(t, jweJSON{
+		Protected: protected,
+		Recipients: []recipientJSON{{
+			Header: recipientHdr{
+				KID: "did:example:recip#key",
+				Alg: AlgECDH1PUXC20PKW,
+				EPK: &EphemeralKey{Kty: keyTypeOKP, Crv: curveX25519, X: b64.EncodeToString(make([]byte, 32))},
+				IV:  b64.EncodeToString(make([]byte, 24)),
+				Tag: b64.EncodeToString(make([]byte, 16)),
+			},
+		}},
+	})
+
+	p, err := Parse(env)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	r := p.Recipients[0]
+	if r.Alg != AlgECDH1PUXC20PKW {
+		t.Fatalf("alg = %q, want per-recipient override", r.Alg)
+	}
+	if r.EPK == nil || r.EPK.Crv != curveX25519 {
+		t.Fatal("epk not resolved from per-recipient header")
+	}
+	if len(r.WrapIV) != 24 || len(r.WrapTag) != 16 {
+		t.Fatalf("wrap iv/tag = %d/%d, want 24/16", len(r.WrapIV), len(r.WrapTag))
+	}
+	if r.KID != "did:example:recip#key" {
+		t.Fatalf("kid = %q", r.KID)
+	}
+}
+
+// TestParseProtectedHeaderInherited covers the protected-header shape: alg/epk in
+// the protected header, a bare per-recipient header. Parse must inherit them, and
+// an A256KW recipient carries no key-wrap iv/tag.
+func TestParseProtectedHeaderInherited(t *testing.T) {
+	protected := b64.EncodeToString(mustJSON(t, Header{
+		Enc: EncA256GCM,
+		Alg: AlgECDH1PUA256KW,
+		EPK: &EphemeralKey{Kty: keyTypeOKP, Crv: curveX25519, X: b64.EncodeToString(make([]byte, 32))},
+	}))
+	env := mustJSON(t, jweJSON{
+		Protected:  protected,
+		Recipients: []recipientJSON{{Header: recipientHdr{KID: "did:example:recip#key"}}},
+	})
+
+	p, err := Parse(env)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	r := p.Recipients[0]
+	if r.Alg != AlgECDH1PUA256KW {
+		t.Fatalf("alg = %q, want inherited from protected", r.Alg)
+	}
+	if r.EPK == nil {
+		t.Fatal("epk not inherited from protected header")
+	}
+	if r.WrapIV != nil || r.WrapTag != nil {
+		t.Fatal("A256KW recipient must carry no key-wrap iv/tag")
+	}
 }

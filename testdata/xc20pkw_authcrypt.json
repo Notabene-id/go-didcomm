@@ -1,0 +1,22 @@
+{
+  "protected": "eyJ0eXAiOiJhcHBsaWNhdGlvbi9kaWRjb21tLWVuY3J5cHRlZCtqc29uIiwic2tpZCI6ImRpZDp3ZWI6c2VuZGVyLmV4YW1wbGUja2V5LTEiLCJlbmMiOiJYQzIwUCJ9",
+  "iv": "NTZouw3ahRhqt6SZSnddGCrN5aVeQ4pr",
+  "ciphertext": "VMRQscaLTu4S6KacUpOi2uf05F4NE1OfjCvIzxPXhGk2GdRdh8vWWZSzQdia_q4DG_iwqfA12Pk_9p95M01GjlG_XZOU49Rt6BbzxDVXpAjNyk8_rsLUYcPRJn6msKbgHIuQyriq0VmFt1aJV_-nda0xRhD6qGtrxQ_SDCq_cuVvSsGIsYlFqNAHAWQ8E8Nhtvm3BFmkwdg7PSOJpmVrab-nhiI4e-HcDesLpFeAqqhtkrDeFvGWuBKkxg",
+  "tag": "tZStg2lg6AFqj8nZ0PnDhw",
+  "recipients": [
+    {
+      "encrypted_key": "M0SxUntJBHzVsELGK2qf5MomeIk3WCQhEwRKlIA--Tk",
+      "header": {
+        "iv": "2zuPL7sE2Qu8nuBzB_10mgIPp4LxK5tU",
+        "tag": "Hd6ypvX2iJiGgtoER09qfw",
+        "kid": "did:web:recipient.example#key-1",
+        "alg": "ECDH-1PU+XC20PKW",
+        "epk": {
+          "kty": "OKP",
+          "crv": "X25519",
+          "x": "-x1oI9DRGV1JrmscPjQdZutZZ1_Z8IptXgqpLwuQ0jU"
+        }
+      }
+    }
+  ]
+}

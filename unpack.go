@@ -90,31 +90,42 @@ func (c *Client) unpackEncrypted(
 	ctx context.Context, envelope []byte, allowUnauthenticated bool,
 ) (*Message, *Metadata, error) {
 	p, err := jose.Parse(envelope)
-	if err != nil || p.Header.EPK == nil {
-		return nil, nil, ErrDecryptFailed
-	}
-	ephemeralPub, err := b64.DecodeString(p.Header.EPK.X)
-	if err != nil || len(ephemeralPub) != 32 {
+	if err != nil {
 		return nil, nil, ErrDecryptFailed
 	}
 
-	authcrypt := p.Header.Alg == jose.AlgECDH1PUA256KW
+	// Resolve the sender's static key (skid, envelope-level) only when a
+	// recipient actually uses authcrypt — an anoncrypt envelope never needs it,
+	// even if it carries a stray skid, and must not fail on its DID resolution.
+	// alg and epk placement is implementation-specific (protected header or
+	// per-recipient header) — Parse resolves the effective value onto each
+	// recipient.
 	var senderStaticPub []byte
-	if authcrypt {
-		if p.Header.SKID == "" {
-			return nil, nil, ErrDecryptFailed
-		}
+	if p.Header.SKID != "" && anyAuthcrypt(p.Recipients) {
 		if senderStaticPub, err = c.keyAgreementPublic(ctx, p.Header.SKID); err != nil {
 			return nil, nil, ErrDecryptFailed
 		}
 	}
 
-	for _, r := range p.Recipients {
+	for i := range p.Recipients {
+		r := &p.Recipients[i]
+		if r.EPK == nil {
+			continue
+		}
+		ephemeralPub, err := b64.DecodeString(r.EPK.X)
+		if err != nil || len(ephemeralPub) != 32 {
+			continue
+		}
+		authcrypt := jose.IsAuthcrypt(r.Alg)
+		if authcrypt && senderStaticPub == nil {
+			continue
+		}
+
 		z, ok := c.recipientSharedSecret(ctx, r.KID, ephemeralPub, senderStaticPub, authcrypt)
 		if !ok {
 			continue
 		}
-		plaintext, profile, ok := openTrial(p, r.EncryptedKey, z, authcrypt)
+		plaintext, profile, ok := openTrial(p, r, z, authcrypt)
 		if !ok {
 			continue
 		}
@@ -230,22 +241,34 @@ func (c *Client) recipientSharedSecret(
 	return z, true
 }
 
+// anyAuthcrypt reports whether any recipient uses an ECDH-1PU alg.
+func anyAuthcrypt(recipients []jose.ParsedRecipient) bool {
+	for i := range recipients {
+		if jose.IsAuthcrypt(recipients[i].Alg) {
+			return true
+		}
+	}
+	return false
+}
+
 // openTrial decrypts a recipient entry, selecting the ECDH-1PU draft when the
 // content encryption permits either. Draft-03 and draft-04 share an "alg" value,
 // so an A256CBC-HS512 authcrypt is tried without the tag binding (draft-03) then
-// with it (draft-04); both failures are indistinguishable to a caller.
-func openTrial(p *jose.ParsedJWE, encryptedKey, z []byte, authcrypt bool) ([]byte, Profile, bool) {
+// with it (draft-04); both failures are indistinguishable to a caller. XC20P
+// authcrypt is always draft-03 (ECDH-1PU "v3"), hence ProfileAuthcrypt1PUv3 —
+// the profile names the 1PU draft, not the content cipher.
+func openTrial(p *jose.ParsedJWE, r *jose.ParsedRecipient, z []byte, authcrypt bool) ([]byte, Profile, bool) {
 	if !authcrypt {
-		if pt, err := jose.OpenRecipient(p, encryptedKey, z, false); err == nil {
+		if pt, err := jose.OpenRecipient(p, r, z, false); err == nil {
 			return pt, ProfileSignedAnoncrypt, true
 		}
 		return nil, 0, false
 	}
-	if pt, err := jose.OpenRecipient(p, encryptedKey, z, false); err == nil {
+	if pt, err := jose.OpenRecipient(p, r, z, false); err == nil {
 		return pt, ProfileAuthcrypt1PUv3, true
 	}
 	if p.Header.Enc == jose.EncA256CBCHS512 {
-		if pt, err := jose.OpenRecipient(p, encryptedKey, z, true); err == nil {
+		if pt, err := jose.OpenRecipient(p, r, z, true); err == nil {
 			return pt, ProfileAuthcrypt1PUv4, true
 		}
 	}
