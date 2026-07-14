@@ -116,7 +116,7 @@ func TestRoundTripCompactAndCBC(t *testing.T) {
 
 // TestUnpackRejectsPlain confirms an unsigned message is rejected by Unpack and
 // only accepted by UnpackUnverified with no verified sender. This is the
-// regression for the plain-message injection vulnerability (TX-1296).
+// regression for the plain-message injection vulnerability.
 func TestUnpackRejectsPlain(t *testing.T) {
 	p := newParties(t)
 	ctx := context.Background()

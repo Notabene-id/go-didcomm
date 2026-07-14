@@ -27,9 +27,8 @@ func (e *epochSeconds) UnmarshalJSON(data []byte) error {
 }
 
 // recipients unmarshals the "to" field from either an array (per the DIDComm v2
-// spec) or a bare string. Veramo emits a string because @veramo/did-comm types
-// IDIDCommMessage.to as a single recipient and its wrapper splits multi-recipient
-// messages into one envelope each.
+// spec) or a bare string, which some DIDComm v2 implementations emit when a
+// message has a single recipient.
 type recipients []string
 
 // UnmarshalJSON accepts a JSON array of strings or a single string.

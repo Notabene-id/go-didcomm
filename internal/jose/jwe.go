@@ -7,8 +7,13 @@ import (
 	"strings"
 )
 
-// kekSize is the AES-256 key-wrapping key length in bytes (A256KW).
-const kekSize = 32
+const (
+	// kekSize is the AES-256 key-wrapping key length in bytes (A256KW).
+	kekSize = 32
+	// keyTypeOKP and curveX25519 are the JWK "kty"/"crv" of the X25519 epk.
+	keyTypeOKP  = "OKP"
+	curveX25519 = "X25519"
+)
 
 // EphemeralKey is the "epk" JWK: an OKP X25519 public key.
 type EphemeralKey struct {
@@ -52,10 +57,21 @@ type EncryptRequest struct {
 	Recipients    []Recipient
 }
 
-// ParsedRecipient is one recipient entry from a parsed JWE.
+// ParsedRecipient is one recipient entry from a parsed JWE, with its
+// key-agreement parameters resolved. Implementations differ on placement: some
+// carry alg/epk/apu/apv (and, for XC20PKW, the key-wrap iv/tag) in the
+// per-recipient header, others put alg/epk in the protected header. These fields
+// hold the effective value — per-recipient when present, otherwise inherited
+// from the protected header.
 type ParsedRecipient struct {
 	KID          string
 	EncryptedKey []byte
+	Alg          KeyWrapAlgorithm
+	EPK          *EphemeralKey
+	APU          string
+	APV          string
+	WrapIV       []byte // XC20PKW per-recipient key-wrap nonce; nil for A256KW
+	WrapTag      []byte // XC20PKW per-recipient key-wrap tag; nil for A256KW
 }
 
 // ParsedJWE is the decoded wire form. RawProtected is retained verbatim because
@@ -87,7 +103,13 @@ type recipientJSON struct {
 }
 
 type recipientHdr struct {
-	KID string `json:"kid,omitempty"`
+	KID string           `json:"kid,omitempty"`
+	Alg KeyWrapAlgorithm `json:"alg,omitempty"`
+	EPK *EphemeralKey    `json:"epk,omitempty"`
+	APU string           `json:"apu,omitempty"`
+	APV string           `json:"apv,omitempty"`
+	IV  string           `json:"iv,omitempty"`  // XC20PKW key-wrap nonce
+	Tag string           `json:"tag,omitempty"` // XC20PKW key-wrap tag
 }
 
 var b64 = base64.RawURLEncoding
@@ -138,7 +160,7 @@ func Encrypt(req *EncryptRequest) ([]byte, error) {
 		APV:  encodeOptional(req.APV),
 	}
 	if req.EphemeralPub != nil {
-		hdr.EPK = &EphemeralKey{Kty: "OKP", Crv: "X25519", X: b64.EncodeToString(req.EphemeralPub)}
+		hdr.EPK = &EphemeralKey{Kty: keyTypeOKP, Crv: curveX25519, X: b64.EncodeToString(req.EphemeralPub)}
 	}
 	if req.Serialization == Compact {
 		hdr.KID = req.Recipients[0].KID
@@ -177,15 +199,17 @@ func Encrypt(req *EncryptRequest) ([]byte, error) {
 	return serializeGeneral(protectedB64, req.Recipients, wrapped, s)
 }
 
-// OpenRecipient decrypts a parsed JWE for the recipient whose wrapped key and
-// ECDH shared secret z are supplied. bindTag must match how the envelope was
+// OpenRecipient decrypts a parsed JWE for recipient r, given the ECDH shared
+// secret z. The key-agreement parameters (alg, apu/apv, epk) come from r —
+// per-recipient when the sender put them there, otherwise inherited from the
+// protected header. bindTag must match how the envelope was
 // produced (ECDH-1PU draft-04). Every failure returns ErrDecrypt.
-func OpenRecipient(p *ParsedJWE, encryptedKey, z []byte, bindTag bool) ([]byte, error) {
-	apu, err := decodeOptional(p.Header.APU)
+func OpenRecipient(p *ParsedJWE, r *ParsedRecipient, z []byte, bindTag bool) ([]byte, error) {
+	apu, err := decodeOptional(r.APU)
 	if err != nil {
 		return nil, ErrDecrypt
 	}
-	apv, err := decodeOptional(p.Header.APV)
+	apv, err := decodeOptional(r.APV)
 	if err != nil {
 		return nil, ErrDecrypt
 	}
@@ -194,13 +218,26 @@ func OpenRecipient(p *ParsedJWE, encryptedKey, z []byte, bindTag bool) ([]byte, 
 	if bindTag {
 		kdfTag = p.Tag
 	}
-	kek := DeriveKEK(z, p.Header.Alg, apu, apv, kdfTag)
+	kek := DeriveKEK(z, r.Alg, apu, apv, kdfTag)
 
-	cek, err := aesKeyUnwrap(kek, encryptedKey)
+	cek, err := unwrapCEK(r, kek)
 	if err != nil {
 		return nil, ErrDecrypt
 	}
 	return decryptContent(p.Header.Enc, cek, p.IV, p.Ciphertext, p.Tag, []byte(p.RawProtected))
+}
+
+// unwrapCEK recovers the content-encryption key from a recipient entry using the
+// key-wrap its alg names: RFC 3394 AES-KW, or XChaCha20-Poly1305 (XC20PKW).
+func unwrapCEK(r *ParsedRecipient, kek []byte) ([]byte, error) {
+	switch r.Alg {
+	case AlgECDH1PUA256KW, AlgECDHESA256KW:
+		return aesKeyUnwrap(kek, r.EncryptedKey)
+	case AlgECDH1PUXC20PKW:
+		return xc20pKeyUnwrap(kek, r.EncryptedKey, r.WrapIV, r.WrapTag)
+	default:
+		return nil, ErrDecrypt
+	}
 }
 
 // Parse decodes a general-JSON, flattened-JSON, or compact JWE.
@@ -225,23 +262,27 @@ func parseJSON(data []byte) (*ParsedJWE, error) {
 
 	switch {
 	case len(w.Recipients) > 0:
-		for _, r := range w.Recipients {
-			ek, err := b64.DecodeString(r.EncryptedKey)
+		for i := range w.Recipients {
+			ek, err := b64.DecodeString(w.Recipients[i].EncryptedKey)
 			if err != nil {
 				return nil, ErrMalformed
 			}
-			p.Recipients = append(p.Recipients, ParsedRecipient{KID: r.Header.KID, EncryptedKey: ek})
+			pr, err := mergeRecipient(&hdr, &w.Recipients[i].Header, ek)
+			if err != nil {
+				return nil, err
+			}
+			p.Recipients = append(p.Recipients, pr)
 		}
 	case w.EncryptedKey != "":
 		ek, err := b64.DecodeString(w.EncryptedKey)
 		if err != nil {
 			return nil, ErrMalformed
 		}
-		kid := hdr.KID
-		if w.RecipHeader != nil && w.RecipHeader.KID != "" {
-			kid = w.RecipHeader.KID
+		pr, err := mergeRecipient(&hdr, w.RecipHeader, ek)
+		if err != nil {
+			return nil, err
 		}
-		p.Recipients = append(p.Recipients, ParsedRecipient{KID: kid, EncryptedKey: ek})
+		p.Recipients = append(p.Recipients, pr)
 	default:
 		return nil, ErrMalformed
 	}
@@ -265,10 +306,14 @@ func parseCompact(data string) (*ParsedJWE, error) {
 	if err != nil {
 		return nil, ErrMalformed
 	}
+	pr, err := mergeRecipient(&hdr, nil, ek)
+	if err != nil {
+		return nil, err
+	}
 	p := &ParsedJWE{
 		Header:       hdr,
 		RawProtected: parts[0],
-		Recipients:   []ParsedRecipient{{KID: hdr.KID, EncryptedKey: ek}},
+		Recipients:   []ParsedRecipient{pr},
 	}
 	if err := decodeBody(p, parts[2], parts[3], parts[4]); err != nil {
 		return nil, err
@@ -286,6 +331,50 @@ func decodeHeader(protectedB64 string) (Header, error) {
 		return Header{}, ErrMalformed
 	}
 	return hdr, nil
+}
+
+// mergeRecipient resolves a recipient's key-agreement parameters, taking each
+// from the per-recipient header when present and otherwise inheriting it from
+// the protected header hdr.
+func mergeRecipient(hdr *Header, rh *recipientHdr, ek []byte) (ParsedRecipient, error) {
+	pr := ParsedRecipient{
+		EncryptedKey: ek,
+		KID:          hdr.KID,
+		Alg:          hdr.Alg,
+		EPK:          hdr.EPK,
+		APU:          hdr.APU,
+		APV:          hdr.APV,
+	}
+	if rh == nil {
+		return pr, nil
+	}
+	if rh.KID != "" {
+		pr.KID = rh.KID
+	}
+	if rh.Alg != "" {
+		pr.Alg = rh.Alg
+	}
+	if rh.EPK != nil {
+		pr.EPK = rh.EPK
+	}
+	if rh.APU != "" {
+		pr.APU = rh.APU
+	}
+	if rh.APV != "" {
+		pr.APV = rh.APV
+	}
+	var err error
+	if rh.IV != "" {
+		if pr.WrapIV, err = b64.DecodeString(rh.IV); err != nil {
+			return ParsedRecipient{}, ErrMalformed
+		}
+	}
+	if rh.Tag != "" {
+		if pr.WrapTag, err = b64.DecodeString(rh.Tag); err != nil {
+			return ParsedRecipient{}, ErrMalformed
+		}
+	}
+	return pr, nil
 }
 
 func decodeBody(p *ParsedJWE, iv, ciphertext, tag string) error {

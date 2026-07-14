@@ -6,6 +6,7 @@ require (
 	filippo.io/edwards25519 v1.2.0
 	github.com/lestrrat-go/jwx/v3 v3.1.1
 	github.com/mr-tron/base58 v1.3.0
+	golang.org/x/crypto v0.54.0
 )
 
 require (
@@ -19,5 +20,5 @@ require (
 	github.com/lestrrat-go/option/v2 v2.0.0 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
 	github.com/valyala/fastjson v1.6.10 // indirect
-	golang.org/x/sys v0.46.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
 )
