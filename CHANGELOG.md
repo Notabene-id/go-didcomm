@@ -5,7 +5,29 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.6.1] - 2026-07-16
+
+### Fixed
+- **keyAgreement key selection.** Packing now selects the recipient's X25519
+  key(s), skipping keyAgreement entries of other curves — some DID documents
+  list a non-transport key (e.g. a P-256 PII key) first. Previously the first
+  entry was used unconditionally, so packing to such a recipient failed with
+  "unsupported key type".
+
+### Changed
+- **Encrypt to every X25519 keyAgreement key.** A message is now encrypted to
+  all of a recipient's X25519 keyAgreement keys, so the recipient can decrypt
+  with whichever it holds rather than only the first.
+
+## [0.6.0] - 2026-07-14
+
+### Added
+- **Decrypt ECDH-1PU authcrypt sealed with XChaCha20-Poly1305** on unpack: `alg`
+  `ECDH-1PU+XC20PKW` and `enc` `XC20P` (draft-amringer-jose-chacha-02), for
+  interoperability with DIDComm implementations that use XChaCha20. `alg`, `epk`,
+  and the XC20PKW key-wrap `iv`/`tag` are read from the per-recipient header as
+  well as the protected header. Output is unchanged — this package still emits
+  A256GCM / A256KW.
 
 ## [0.5.0] - 2026-07-07
 
@@ -33,8 +55,8 @@ the pack/unpack API all changed. There is no in-place upgrade from 0.4.x.
   private-key material — the library never receives a private key. HSM/KMS-ready.
 - **`softkey` package**: an in-memory `KeyStore` for tests and local development;
   the only place raw keys are handled, kept out of the core.
-- **Real ECDH-1PU authcrypt**, draft-03 and draft-04, interoperable with Veramo
-  and other DIDComm v2 peers. Selectable per message via `Profile`
+- **Real ECDH-1PU authcrypt**, draft-03 and draft-04, interoperable with
+  DIDComm v2 peers. Selectable per message via `Profile`
   (`ProfileSignedAnoncrypt`, `ProfileAuthcrypt1PUv3`, `ProfileAuthcrypt1PUv4`,
   `ProfileAnoncrypt`, `ProfileSigned`) with `WithContentEncryption` and
   `WithSerialization` options.
@@ -49,7 +71,7 @@ the pack/unpack API all changed. There is no in-place upgrade from 0.4.x.
 - `Pack` takes functional options; `Unpack` returns `(*Message, *Metadata, error)`.
 - `internal/jose` implements ConcatKDF (RFC 7518 §4.6), AES key wrap (RFC 3394),
   and A256CBC-HS512 / A256GCM content encryption (RFC 7518 §5), verified against
-  RFC test vectors and a captured Veramo interop fixture.
+  RFC test vectors and a captured cross-implementation interop fixture.
 - The CLI is a single hardened `cmd/didcomm` command; private keys are written
   `0600` and only printed with `--print-private`.
 
@@ -100,7 +122,8 @@ the pack/unpack API all changed. There is no in-place upgrade from 0.4.x.
 - `SecretsResolver` interface and in-memory implementation.
 - GitHub Actions CI with linting and tests.
 
-[Unreleased]: https://github.com/notabene-id/go-didcomm/compare/v0.5.0...HEAD
+[0.6.1]: https://github.com/notabene-id/go-didcomm/compare/v0.6.0...v0.6.1
+[0.6.0]: https://github.com/notabene-id/go-didcomm/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/notabene-id/go-didcomm/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Notabene-id/go-didcomm/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Notabene-id/go-didcomm/compare/v0.2.0...v0.3.0

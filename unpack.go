@@ -289,7 +289,7 @@ func (c *Client) keyAgreementPublic(ctx context.Context, kid string) ([]byte, er
 	if err != nil {
 		return nil, err
 	}
-	return x25519PublicBytes(vm.PublicKey)
+	return x25519FromKey(vm.PublicKey)
 }
 
 // signingKey resolves the public signing key for a kid, from the authentication
