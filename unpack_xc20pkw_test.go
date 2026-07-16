@@ -17,9 +17,8 @@ import (
 var xc20pkwEnvelope []byte
 
 // Fixed test vector: an ECDH-1PU (draft-03) authcrypt JWE sealed with
-// XChaCha20-Poly1305 (alg ECDH-1PU+XC20PKW, enc XC20P), as emitted by DIDComm-JS
-// senders — alg/epk and the key-wrap iv/tag live in the per-recipient header.
-// Keys are throwaway test material.
+// XChaCha20-Poly1305 (alg ECDH-1PU+XC20PKW, enc XC20P), with alg/epk and the
+// key-wrap iv/tag in the per-recipient header. Keys are throwaway test material.
 const (
 	xcSenderDID     = "did:web:sender.example"
 	xcSenderKAKid   = "did:web:sender.example#key-1"

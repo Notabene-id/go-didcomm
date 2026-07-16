@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -81,6 +82,13 @@ func (vm *VerificationMethod) UnmarshalJSON(data []byte) error {
 	}
 	key, err := raw.publicKey()
 	if err != nil {
+		// An unsupported key type (a curve/method this library doesn't use) must
+		// not fail the whole document: leave PublicKey nil so this method is
+		// skipped while the rest of the document — including usable keys —
+		// remains available. Malformed key material of a known type still errors.
+		if errors.Is(err, ErrUnsupportedKeyType) {
+			return nil
+		}
 		return fmt.Errorf("verification method %s: %w", raw.ID, err)
 	}
 	vm.PublicKey = key
@@ -372,12 +380,14 @@ func (r *InMemoryResolver) Resolve(_ context.Context, did string) (*DIDDocument,
 	return doc, nil
 }
 
-// FindEncryptionKey returns the first key agreement key from a DID document.
+// FindEncryptionKey returns the first X25519 key agreement key from a DID
+// document, skipping keys of other curves (e.g. a P-256 PII key).
 func (doc *DIDDocument) FindEncryptionKey() (*VerificationMethod, error) {
-	if len(doc.KeyAgreement) == 0 {
-		return nil, fmt.Errorf("%w: no key agreement keys in DID document %s", ErrKeyNotFound, doc.ID)
+	vm, err := firstX25519(doc.KeyAgreement)
+	if err != nil {
+		return nil, fmt.Errorf("%w: no X25519 key agreement key in DID document %s", ErrKeyNotFound, doc.ID)
 	}
-	return &doc.KeyAgreement[0], nil
+	return vm, nil
 }
 
 // FindSigningKey returns the first authentication key from a DID document.

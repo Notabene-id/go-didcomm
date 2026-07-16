@@ -81,11 +81,11 @@ func (c *Client) encrypt(
 
 	recipients := make([]jose.Recipient, 0, len(msg.To))
 	for _, to := range msg.To {
-		z, kid, rErr := c.recipientSecret(ctx, ephemeral, senderKID, spec.authcrypt, to)
+		recips, rErr := c.recipientSecrets(ctx, ephemeral, senderKID, spec.authcrypt, to)
 		if rErr != nil {
 			return nil, rErr
 		}
-		recipients = append(recipients, jose.Recipient{KID: kid, Z: z})
+		recipients = append(recipients, recips...)
 	}
 
 	env, err := jose.Encrypt(&jose.EncryptRequest{
@@ -105,45 +105,59 @@ func (c *Client) encrypt(
 	return env, nil
 }
 
-// recipientSecret resolves one recipient's key-agreement key and derives the
-// ECDH shared secret: Ze for ECDH-ES, or Ze||Zs for ECDH-1PU (Zs computed
-// through the sealed key store from the sender's static key).
-func (c *Client) recipientSecret(
+// recipientSecrets resolves every X25519 key-agreement key the recipient
+// publishes and derives an ECDH shared secret for each, so the message is
+// encrypted to all of them — per the DIDComm convention — so the recipient can
+// decrypt with whichever key it holds. z is Ze for ECDH-ES, or
+// Ze‖Zs for ECDH-1PU (Zs computed through the sealed key store from the sender's
+// static key). Non-X25519 keyAgreement entries (e.g. a P-256 PII key) are skipped.
+func (c *Client) recipientSecrets(
 	ctx context.Context, ephemeral *ecdh.PrivateKey, senderKID string, authcrypt bool, to string,
-) (z []byte, kid string, err error) {
+) ([]jose.Recipient, error) {
 	doc, err := c.resolve(ctx, to)
 	if err != nil {
-		return nil, "", fmt.Errorf("resolve recipient %s: %w", to, err)
+		return nil, fmt.Errorf("resolve recipient %s: %w", to, err)
 	}
-	vm, err := doc.keyAgreementKey("")
-	if err != nil {
-		return nil, "", fmt.Errorf("recipient %s key agreement: %w", to, err)
-	}
-	recipientPub, err := x25519PublicBytes(vm.PublicKey)
-	if err != nil {
-		return nil, "", fmt.Errorf("recipient %s public key: %w", to, err)
-	}
-	peer, err := ecdh.X25519().NewPublicKey(recipientPub)
-	if err != nil {
-		return nil, "", fmt.Errorf("recipient %s public key: %w", to, err)
+	vms := allX25519(doc.KeyAgreement)
+	if len(vms) == 0 {
+		return nil, fmt.Errorf("recipient %s key agreement: %w", to, ErrKeyNotFound)
 	}
 
-	ze, err := ephemeral.ECDH(peer)
-	if err != nil {
-		return nil, "", fmt.Errorf("ephemeral ECDH for %s: %w", to, err)
-	}
-	if !authcrypt {
-		return ze, vm.ID, nil
-	}
+	out := make([]jose.Recipient, 0, len(vms))
+	seen := make(map[string]struct{}, len(vms))
+	for _, vm := range vms {
+		recipientPub, err := x25519FromKey(vm.PublicKey)
+		if err != nil {
+			return nil, fmt.Errorf("recipient %s public key: %w", to, err)
+		}
+		// Encrypt once per distinct X25519 key: a doc may list the same key
+		// twice (e.g. an Ed25519 key alongside its own Montgomery form).
+		if _, dup := seen[string(recipientPub)]; dup {
+			continue
+		}
+		seen[string(recipientPub)] = struct{}{}
 
-	zs, err := c.keys.DiffieHellman(ctx, senderKID, recipientPub)
-	if err != nil {
-		return nil, "", fmt.Errorf("sender ECDH for %s: %w", to, err)
+		peer, err := ecdh.X25519().NewPublicKey(recipientPub)
+		if err != nil {
+			return nil, fmt.Errorf("recipient %s public key: %w", to, err)
+		}
+		ze, err := ephemeral.ECDH(peer)
+		if err != nil {
+			return nil, fmt.Errorf("ephemeral ECDH for %s: %w", to, err)
+		}
+		z := ze
+		if authcrypt {
+			zs, err := c.keys.DiffieHellman(ctx, senderKID, recipientPub)
+			if err != nil {
+				return nil, fmt.Errorf("sender ECDH for %s: %w", to, err)
+			}
+			z = make([]byte, 0, len(ze)+len(zs))
+			z = append(z, ze...)
+			z = append(z, zs...)
+		}
+		out = append(out, jose.Recipient{KID: vm.ID, Z: z})
 	}
-	z = make([]byte, 0, len(ze)+len(zs))
-	z = append(z, ze...)
-	z = append(z, zs...)
-	return z, vm.ID, nil
+	return out, nil
 }
 
 // signingKID resolves the sender's signing verification-method id.
