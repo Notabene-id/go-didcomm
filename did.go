@@ -1,6 +1,7 @@
 package didcomm
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"encoding/binary"
@@ -14,19 +15,31 @@ import (
 	"github.com/mr-tron/base58"
 )
 
+// ServiceTypeDIDCommMessaging is the service type for DIDComm v2 endpoints.
+const ServiceTypeDIDCommMessaging = "DIDCommMessaging"
+
 // Multicodec prefixes for did:key.
 const (
 	multicodecEd25519 = 0xed
 	multicodecX25519  = 0xec
 )
 
-// Verification-method types this library emits, plus the legacy 2018/2019 types
-// it still accepts when parsing documents from older peers (W3C DID registry).
+// VMTypeJSONWebKey is the verification-method type this library emits.
+const VMTypeJSONWebKey = "JsonWebKey2020"
+
+// Verification-method types still accepted when parsing documents from older
+// peers (W3C DID registry).
 const (
 	vmTypeEd25519       = "Ed25519VerificationKey2020"
 	vmTypeX25519        = "X25519KeyAgreementKey2020"
 	vmTypeEd25519Legacy = "Ed25519VerificationKey2018"
 	vmTypeX25519Legacy  = "X25519KeyAgreementKey2019"
+)
+
+// JSON-LD contexts emitted on generated documents.
+const (
+	contextDIDCore = "https://www.w3.org/ns/did/v1"
+	contextJWS2020 = "https://w3id.org/security/suites/jws-2020/v1"
 )
 
 // VerificationMethod represents a DID document verification method.
@@ -162,33 +175,63 @@ func publicKeyFromMultibase(multibase, kid string) (jwk.Key, error) {
 	}
 }
 
-// DIDDocument is a thin DID document with only DIDComm-relevant fields.
+// DIDDocument is a DID document covering the fields DIDComm and did:web
+// hosting need.
 type DIDDocument struct {
+	// Context is the raw JSON-LD @context; build one with [DocumentContext].
+	Context            json.RawMessage      `json:"@context,omitempty"`
 	ID                 string               `json:"id"`
 	VerificationMethod []VerificationMethod `json:"verificationMethod,omitempty"`
 	Authentication     []VerificationMethod `json:"authentication,omitempty"`
+	AssertionMethod    []VerificationMethod `json:"assertionMethod,omitempty"`
 	KeyAgreement       []VerificationMethod `json:"keyAgreement,omitempty"`
 	Service            []Service            `json:"service,omitempty"`
 }
 
-// didDocumentJSON is the JSON wire format for DIDDocument.
+// didDocumentJSON is the parse wire format; relationship entries may be
+// inline objects or string references.
 type didDocumentJSON struct {
+	Context            json.RawMessage      `json:"@context,omitempty"`
 	ID                 string               `json:"id"`
 	VerificationMethod []VerificationMethod `json:"verificationMethod,omitempty"`
 	Authentication     []json.RawMessage    `json:"authentication,omitempty"`
+	AssertionMethod    []json.RawMessage    `json:"assertionMethod,omitempty"`
 	KeyAgreement       []json.RawMessage    `json:"keyAgreement,omitempty"`
 	Service            []Service            `json:"service,omitempty"`
 }
 
-// UnmarshalJSON handles DID document fields where authentication and keyAgreement
-// can contain either inline verification method objects or string references
-// to entries in the verificationMethod array.
+// didDocumentRefsJSON is the emission wire format: relationships as DID URL
+// references into verificationMethod.
+type didDocumentRefsJSON struct {
+	Context            json.RawMessage      `json:"@context,omitempty"`
+	ID                 string               `json:"id"`
+	VerificationMethod []VerificationMethod `json:"verificationMethod,omitempty"`
+	Authentication     []string             `json:"authentication,omitempty"`
+	AssertionMethod    []string             `json:"assertionMethod,omitempty"`
+	KeyAgreement       []string             `json:"keyAgreement,omitempty"`
+	Service            []Service            `json:"service,omitempty"`
+}
+
+// DocumentContext builds a JSON-LD @context value from the given URIs, for
+// assignment to [DIDDocument.Context].
+func DocumentContext(uris ...string) json.RawMessage {
+	data, err := json.Marshal(uris)
+	if err != nil {
+		panic(err) // marshaling []string cannot fail
+	}
+	return data
+}
+
+// UnmarshalJSON handles DID document fields where the verification
+// relationships can contain either inline verification method objects or
+// string references to entries in the verificationMethod array.
 func (doc *DIDDocument) UnmarshalJSON(data []byte) error {
 	var raw didDocumentJSON
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
 
+	doc.Context = raw.Context
 	doc.ID = raw.ID
 	doc.VerificationMethod = raw.VerificationMethod
 	doc.Service = raw.Service
@@ -198,12 +241,61 @@ func (doc *DIDDocument) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return fmt.Errorf("authentication: %w", err)
 	}
+	doc.AssertionMethod, err = resolveVerificationMethods(raw.AssertionMethod, raw.VerificationMethod)
+	if err != nil {
+		return fmt.Errorf("assertionMethod: %w", err)
+	}
 	doc.KeyAgreement, err = resolveVerificationMethods(raw.KeyAgreement, raw.VerificationMethod)
 	if err != nil {
 		return fmt.Errorf("keyAgreement: %w", err)
 	}
 
 	return nil
+}
+
+// MarshalJSON hoists every verification method into the top-level
+// verificationMethod array and emits relationships as DID URL references —
+// many consumers dereference only against the top-level array.
+//
+//nolint:gocritic // hugeParam: value receiver so DIDDocument and *DIDDocument marshal identically
+func (doc DIDDocument) MarshalJSON() ([]byte, error) {
+	out := didDocumentRefsJSON{
+		Context: doc.Context,
+		ID:      doc.ID,
+		Service: doc.Service,
+	}
+
+	methods := make([]VerificationMethod, 0, len(doc.VerificationMethod))
+	seen := make(map[string]bool, len(doc.VerificationMethod))
+	for _, vm := range doc.VerificationMethod {
+		if seen[vm.ID] {
+			continue
+		}
+		seen[vm.ID] = true
+		methods = append(methods, vm)
+	}
+	hoist := func(vms []VerificationMethod) []string {
+		if len(vms) == 0 {
+			return nil
+		}
+		refs := make([]string, 0, len(vms))
+		for _, vm := range vms {
+			refs = append(refs, vm.ID)
+			// A bare reference (no type, no key material) has nothing to hoist.
+			if seen[vm.ID] || (vm.Type == "" && vm.PublicKey == nil) {
+				continue
+			}
+			seen[vm.ID] = true
+			methods = append(methods, vm)
+		}
+		return refs
+	}
+	out.Authentication = hoist(doc.Authentication)
+	out.AssertionMethod = hoist(doc.AssertionMethod)
+	out.KeyAgreement = hoist(doc.KeyAgreement)
+	out.VerificationMethod = methods
+
+	return json.Marshal(out)
 }
 
 // resolveVerificationMethods converts a mixed array of string references and inline
@@ -250,9 +342,77 @@ func resolveVerificationMethods(raw []json.RawMessage, vms []VerificationMethod)
 
 // Service represents a DID document service entry.
 type Service struct {
-	ID              string `json:"id"`
-	Type            string `json:"type"`
-	ServiceEndpoint string `json:"serviceEndpoint"`
+	ID              string          `json:"id"`
+	Type            string          `json:"type"`
+	ServiceEndpoint ServiceEndpoint `json:"serviceEndpoint"`
+}
+
+// ServiceEndpoint is a service endpoint. DIDComm v2 requires the object form;
+// legacy bare-string and array forms are accepted on parse.
+type ServiceEndpoint struct {
+	URI         string   `json:"uri"`
+	Accept      []string `json:"accept,omitempty"`
+	RoutingKeys []string `json:"routingKeys"`
+}
+
+// serviceEndpointJSON is ServiceEndpoint without its marshal methods.
+type serviceEndpointJSON ServiceEndpoint
+
+// MarshalJSON emits routingKeys as [] rather than null — some consumers
+// require the key to be present.
+func (se ServiceEndpoint) MarshalJSON() ([]byte, error) {
+	w := serviceEndpointJSON(se)
+	if w.RoutingKeys == nil {
+		w.RoutingKeys = []string{}
+	}
+	return json.Marshal(w) //nolint:wrapcheck // thin alias marshal, nothing to add
+}
+
+// UnmarshalJSON accepts the object form, a bare URI string, or an array of
+// either (first entry with a URI wins); unusable values parse to a zero
+// endpoint rather than failing the document.
+func (se *ServiceEndpoint) UnmarshalJSON(data []byte) error {
+	*se = ServiceEndpoint{}
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 {
+		return nil
+	}
+	if trimmed[0] != '[' {
+		se.setFromSingle(trimmed)
+		return nil
+	}
+	var entries []json.RawMessage
+	if err := json.Unmarshal(trimmed, &entries); err != nil {
+		return nil //nolint:nilerr // tolerated: malformed endpoint, see doc comment
+	}
+	for _, entry := range entries {
+		var candidate ServiceEndpoint
+		candidate.setFromSingle(bytes.TrimSpace(entry))
+		if candidate.URI != "" {
+			*se = candidate
+			return nil
+		}
+	}
+	return nil
+}
+
+// setFromSingle parses one endpoint value (URI string or object); anything
+// else leaves the endpoint zero.
+func (se *ServiceEndpoint) setFromSingle(data []byte) {
+	if len(data) == 0 {
+		return
+	}
+	if data[0] == '"' {
+		var uri string
+		if json.Unmarshal(data, &uri) == nil {
+			se.URI = uri
+		}
+		return
+	}
+	var w serviceEndpointJSON
+	if json.Unmarshal(data, &w) == nil {
+		*se = ServiceEndpoint(w)
+	}
 }
 
 // GenerateDIDKey generates a new did:key with an Ed25519 signing key and its
@@ -308,13 +468,14 @@ func buildDIDDocument(did, sigKID, encKID string, gk *generatedKeys) (*DIDDocume
 		return nil, nil, err
 	}
 
+	signing := VerificationMethod{ID: sigKID, Type: VMTypeJSONWebKey, Controller: did, PublicKey: sigPubJWK}
 	doc := &DIDDocument{
-		ID: did,
-		Authentication: []VerificationMethod{
-			{ID: sigKID, Type: vmTypeEd25519, Controller: did, PublicKey: sigPubJWK},
-		},
+		Context:         DocumentContext(contextDIDCore, contextJWS2020),
+		ID:              did,
+		Authentication:  []VerificationMethod{signing},
+		AssertionMethod: []VerificationMethod{signing},
 		KeyAgreement: []VerificationMethod{
-			{ID: encKID, Type: vmTypeX25519, Controller: did, PublicKey: encPubJWK},
+			{ID: encKID, Type: VMTypeJSONWebKey, Controller: did, PublicKey: encPubJWK},
 		},
 	}
 	km := &KeyMaterial{
@@ -401,8 +562,8 @@ func (doc *DIDDocument) FindSigningKey() (*VerificationMethod, error) {
 // FindDIDCommEndpoint returns the first DIDCommMessaging service endpoint URL from the document.
 func (doc *DIDDocument) FindDIDCommEndpoint() (string, error) {
 	for _, svc := range doc.Service {
-		if svc.Type == "DIDCommMessaging" && svc.ServiceEndpoint != "" {
-			return svc.ServiceEndpoint, nil
+		if svc.Type == ServiceTypeDIDCommMessaging && svc.ServiceEndpoint.URI != "" {
+			return svc.ServiceEndpoint.URI, nil
 		}
 	}
 	return "", fmt.Errorf("%w: no DIDCommMessaging service in DID document %s", ErrNoServiceEndpoint, doc.ID)

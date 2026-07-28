@@ -68,13 +68,14 @@ func buildDIDKeyDoc(did, sigFragment string, ed25519PubBytes []byte) (*DIDDocume
 		return nil, err
 	}
 
+	signing := VerificationMethod{ID: sigKID, Type: VMTypeJSONWebKey, Controller: did, PublicKey: sigPubJWK}
 	return &DIDDocument{
-		ID: did,
-		Authentication: []VerificationMethod{
-			{ID: sigKID, Type: vmTypeEd25519, Controller: did, PublicKey: sigPubJWK},
-		},
+		Context:         DocumentContext(contextDIDCore, contextJWS2020),
+		ID:              did,
+		Authentication:  []VerificationMethod{signing},
+		AssertionMethod: []VerificationMethod{signing},
 		KeyAgreement: []VerificationMethod{
-			{ID: encKID, Type: vmTypeX25519, Controller: did, PublicKey: encPubJWK},
+			{ID: encKID, Type: VMTypeJSONWebKey, Controller: did, PublicKey: encPubJWK},
 		},
 	}, nil
 }

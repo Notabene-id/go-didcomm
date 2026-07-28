@@ -5,6 +5,28 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-07-28
+
+**Breaking**: `Service.ServiceEndpoint` is now a `ServiceEndpoint` struct
+(`{URI, Accept, RoutingKeys}`) instead of a plain string.
+
+### Changed
+- `DIDDocument.MarshalJSON` emits the canonical wire form: verification
+  methods hoisted into a deduped top-level `verificationMethod` array,
+  relationships as DID URL references. Many consumers (Veramo, didcomm-rust)
+  dereference only against the top-level array. Parsing accepts both forms.
+- `ServiceEndpoint` marshals to the DIDComm v2 object form
+  (`{"uri", "accept", "routingKeys"}`); parses the object form, a legacy bare
+  string, or an array of either. `routingKeys` is always emitted.
+- Generated and did:key-resolved documents use `JsonWebKey2020` (matching
+  their `publicKeyJwk` material) and gain `@context` and `assertionMethod`.
+  Parsing of the 2020 and legacy 2018/2019 types is unchanged.
+
+### Added
+- `DIDDocument.Context` (raw `@context`) and `DocumentContext(uris...)`.
+- `DIDDocument.AssertionMethod`, resolved like the other relationships.
+- `VMTypeJSONWebKey` and `ServiceTypeDIDCommMessaging` constants.
+
 ## [0.6.1] - 2026-07-16
 
 ### Fixed
@@ -122,6 +144,7 @@ the pack/unpack API all changed. There is no in-place upgrade from 0.4.x.
 - `SecretsResolver` interface and in-memory implementation.
 - GitHub Actions CI with linting and tests.
 
+[0.7.0]: https://github.com/notabene-id/go-didcomm/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/notabene-id/go-didcomm/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/notabene-id/go-didcomm/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/notabene-id/go-didcomm/compare/v0.4.0...v0.5.0

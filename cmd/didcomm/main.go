@@ -112,7 +112,8 @@ func generateIdentity(web, path, service string) (*didcomm.DIDDocument, *didcomm
 	}
 	if service != "" {
 		doc.Service = append(doc.Service, didcomm.Service{
-			ID: doc.ID + "#didcomm", Type: "DIDCommMessaging", ServiceEndpoint: service,
+			ID: doc.ID + "#didcomm", Type: "DIDCommMessaging",
+			ServiceEndpoint: didcomm.ServiceEndpoint{URI: service, Accept: []string{"didcomm/v2"}},
 		})
 	}
 	return doc, km, nil

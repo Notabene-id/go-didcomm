@@ -34,8 +34,8 @@ func TestGenerateDIDKey(t *testing.T) {
 	if !strings.HasPrefix(authVM.ID, doc.ID+"#") {
 		t.Fatalf("auth key ID should start with DID#, got %s", authVM.ID)
 	}
-	if authVM.Type != "Ed25519VerificationKey2020" {
-		t.Fatalf("expected Ed25519VerificationKey2020, got %s", authVM.Type)
+	if authVM.Type != VMTypeJSONWebKey {
+		t.Fatalf("expected VMTypeJSONWebKey, got %s", authVM.Type)
 	}
 	if authVM.Controller != doc.ID {
 		t.Fatalf("controller should be DID, got %s", authVM.Controller)
@@ -46,8 +46,14 @@ func TestGenerateDIDKey(t *testing.T) {
 	if !strings.HasPrefix(kaVM.ID, doc.ID+"#") {
 		t.Fatalf("key agreement key ID should start with DID#, got %s", kaVM.ID)
 	}
-	if kaVM.Type != "X25519KeyAgreementKey2020" {
-		t.Fatalf("expected X25519KeyAgreementKey2020, got %s", kaVM.Type)
+	if kaVM.Type != VMTypeJSONWebKey {
+		t.Fatalf("expected VMTypeJSONWebKey, got %s", kaVM.Type)
+	}
+	if len(doc.Context) == 0 {
+		t.Fatal("generated document should carry @context")
+	}
+	if len(doc.AssertionMethod) != 1 || doc.AssertionMethod[0].ID != authVM.ID {
+		t.Fatalf("assertionMethod should reference the signing key, got %+v", doc.AssertionMethod)
 	}
 
 	if km == nil {
@@ -246,7 +252,7 @@ func TestDIDDocument_FindDIDCommEndpoint(t *testing.T) {
 	doc := &DIDDocument{
 		ID: "did:web:example.com",
 		Service: []Service{
-			{ID: "#didcomm", Type: "DIDCommMessaging", ServiceEndpoint: "https://example.com/didcomm"},
+			{ID: "#didcomm", Type: "DIDCommMessaging", ServiceEndpoint: ServiceEndpoint{URI: "https://example.com/didcomm"}},
 		},
 	}
 
@@ -271,7 +277,7 @@ func TestDIDDocument_FindDIDCommEndpoint_WrongType(t *testing.T) {
 	doc := &DIDDocument{
 		ID: "did:web:example.com",
 		Service: []Service{
-			{ID: "#other", Type: "OtherService", ServiceEndpoint: "https://example.com/other"},
+			{ID: "#other", Type: "OtherService", ServiceEndpoint: ServiceEndpoint{URI: "https://example.com/other"}},
 		},
 	}
 	_, err := doc.FindDIDCommEndpoint()
@@ -403,5 +409,202 @@ func TestDIDDocument_UnmarshalJSON_MixedReferencesAndInline(t *testing.T) {
 	// Second is inline
 	if doc.Authentication[1].Type != "Ed25519VerificationKey2020" {
 		t.Fatalf("expected inline type, got %s", doc.Authentication[1].Type)
+	}
+}
+
+// TestDIDDocument_MarshalJSON_HoistsEmbeddedMethods pins the canonical emission shape.
+func TestDIDDocument_MarshalJSON_HoistsEmbeddedMethods(t *testing.T) {
+	generated, _, err := GenerateDIDKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	signing := generated.Authentication[0]
+	ka := generated.KeyAgreement[0]
+
+	doc := DIDDocument{
+		Context:         DocumentContext("https://www.w3.org/ns/did/v1"),
+		ID:              "did:web:example.com",
+		Authentication:  []VerificationMethod{signing},
+		AssertionMethod: []VerificationMethod{signing},
+		KeyAgreement:    []VerificationMethod{ka},
+		Service: []Service{{
+			ID: "did:web:example.com#didcomm", Type: "DIDCommMessaging",
+			ServiceEndpoint: ServiceEndpoint{URI: "https://example.com/didcomm", Accept: []string{"didcomm/v2"}},
+		}},
+	}
+
+	data, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var wire struct {
+		Context            []string `json:"@context"`
+		VerificationMethod []struct {
+			ID           string          `json:"id"`
+			Type         string          `json:"type"`
+			PublicKeyJWK json.RawMessage `json:"publicKeyJwk"`
+		} `json:"verificationMethod"`
+		Authentication  []string `json:"authentication"`
+		AssertionMethod []string `json:"assertionMethod"`
+		KeyAgreement    []string `json:"keyAgreement"`
+		Service         []struct {
+			ServiceEndpoint struct {
+				URI         string   `json:"uri"`
+				Accept      []string `json:"accept"`
+				RoutingKeys []string `json:"routingKeys"`
+			} `json:"serviceEndpoint"`
+		} `json:"service"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		t.Fatalf("emitted document does not match the reference wire shape: %v\n%s", err, data)
+	}
+
+	if len(wire.Context) != 1 || wire.Context[0] != "https://www.w3.org/ns/did/v1" {
+		t.Fatalf("@context = %v", wire.Context)
+	}
+	if len(wire.VerificationMethod) != 2 {
+		t.Fatalf("expected 2 hoisted methods, got %d\n%s", len(wire.VerificationMethod), data)
+	}
+	for _, vm := range wire.VerificationMethod {
+		if len(vm.PublicKeyJWK) == 0 {
+			t.Fatalf("hoisted method %s lost its key material", vm.ID)
+		}
+	}
+	if len(wire.Authentication) != 1 || wire.Authentication[0] != signing.ID {
+		t.Fatalf("authentication = %v, want [%s]", wire.Authentication, signing.ID)
+	}
+	if len(wire.AssertionMethod) != 1 || wire.AssertionMethod[0] != signing.ID {
+		t.Fatalf("assertionMethod = %v, want [%s]", wire.AssertionMethod, signing.ID)
+	}
+	if len(wire.KeyAgreement) != 1 || wire.KeyAgreement[0] != ka.ID {
+		t.Fatalf("keyAgreement = %v, want [%s]", wire.KeyAgreement, ka.ID)
+	}
+	ep := wire.Service[0].ServiceEndpoint
+	if ep.URI != "https://example.com/didcomm" {
+		t.Fatalf("service endpoint uri = %q", ep.URI)
+	}
+	if len(ep.Accept) != 1 || ep.Accept[0] != "didcomm/v2" {
+		t.Fatalf("service endpoint accept = %v", ep.Accept)
+	}
+	if ep.RoutingKeys == nil {
+		t.Fatal("routingKeys must be emitted as [], not omitted")
+	}
+
+	// The emission must resolve back into usable keys.
+	var back DIDDocument
+	if err := json.Unmarshal(data, &back); err != nil {
+		t.Fatal(err)
+	}
+	if len(back.AssertionMethod) != 1 || back.AssertionMethod[0].PublicKey == nil {
+		t.Fatal("assertionMethod reference did not resolve on re-parse")
+	}
+	if back.KeyAgreement[0].PublicKey == nil {
+		t.Fatal("keyAgreement reference did not resolve on re-parse")
+	}
+}
+
+func TestDIDDocument_MarshalJSON_DoesNotDuplicateHoistedMethods(t *testing.T) {
+	generated, _, err := GenerateDIDKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	signing := generated.Authentication[0]
+
+	doc := DIDDocument{
+		ID:                 "did:web:example.com",
+		VerificationMethod: []VerificationMethod{signing},
+		Authentication:     []VerificationMethod{signing},
+		AssertionMethod:    []VerificationMethod{signing},
+	}
+	data, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire struct {
+		VerificationMethod []json.RawMessage `json:"verificationMethod"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if len(wire.VerificationMethod) != 1 {
+		t.Fatalf("expected 1 method, got %d\n%s", len(wire.VerificationMethod), data)
+	}
+}
+
+func TestServiceEndpoint_UnmarshalJSON(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantURI string
+	}{
+		{"bare string", `"https://a.example/didcomm"`, "https://a.example/didcomm"},
+		{"object", `{"uri":"https://b.example/didcomm","accept":["didcomm/v2"]}`, "https://b.example/didcomm"},
+		{"array of strings", `["https://c.example/didcomm","https://c2.example"]`, "https://c.example/didcomm"},
+		{"array of objects", `[{"uri":"https://d.example/didcomm"}]`, "https://d.example/didcomm"},
+		{"array skips unusable entries", `[{"origins":["x"]},"https://e.example/didcomm"]`, "https://e.example/didcomm"},
+		{"unusable object tolerated", `{"origins":["https://f.example"]}`, ""},
+		{"unusable scalar tolerated", `42`, ""},
+		{"null tolerated", `null`, ""},
+		{"empty array tolerated", `[]`, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			raw := `{"id":"did:web:x#s","type":"DIDCommMessaging","serviceEndpoint":` + tt.input + `}`
+			var svc Service
+			if err := json.Unmarshal([]byte(raw), &svc); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if svc.ServiceEndpoint.URI != tt.wantURI {
+				t.Fatalf("URI = %q, want %q", svc.ServiceEndpoint.URI, tt.wantURI)
+			}
+		})
+	}
+}
+
+func TestServiceEndpoint_ObjectRoundTrip(t *testing.T) {
+	in := `{"uri":"https://x.example/didcomm","accept":["didcomm/v2"],"routingKeys":["did:web:m#k"]}`
+	var se ServiceEndpoint
+	if err := json.Unmarshal([]byte(in), &se); err != nil {
+		t.Fatal(err)
+	}
+	if len(se.Accept) != 1 || len(se.RoutingKeys) != 1 {
+		t.Fatalf("accept=%v routingKeys=%v", se.Accept, se.RoutingKeys)
+	}
+	out, err := json.Marshal(se)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back ServiceEndpoint
+	if err := json.Unmarshal(out, &back); err != nil {
+		t.Fatal(err)
+	}
+	if back.URI != se.URI || len(back.Accept) != 1 || len(back.RoutingKeys) != 1 {
+		t.Fatalf("round-trip mismatch: %s", out)
+	}
+}
+
+func TestDIDDocument_UnmarshalJSON_AssertionMethodReference(t *testing.T) {
+	generated, _, err := GenerateDIDKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	signing := generated.Authentication[0]
+	vmJSON, err := json.Marshal(signing)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	input := `{
+		"id": "did:web:example.com",
+		"verificationMethod": [` + string(vmJSON) + `],
+		"assertionMethod": ["` + signing.ID + `"]
+	}`
+	var doc DIDDocument
+	if err := json.Unmarshal([]byte(input), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.AssertionMethod) != 1 || doc.AssertionMethod[0].PublicKey == nil {
+		t.Fatal("assertionMethod reference did not resolve")
 	}
 }
