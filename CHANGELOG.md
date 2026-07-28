@@ -5,6 +5,37 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-07-28
+
+**Breaking**: `Service.ServiceEndpoint` is now a `ServiceEndpoint` struct
+(`{URI, Accept, RoutingKeys}`) instead of a plain string.
+
+### Changed
+- **`DIDDocument.MarshalJSON` emits the canonical wire form**: every
+  verification method — including ones embedded in a relationship — is hoisted
+  into the top-level `verificationMethod` array and the relationship sections
+  (`authentication`, `assertionMethod`, `keyAgreement`) are emitted as DID URL
+  references. Several ecosystem consumers (Veramo's PII key lookup, the network
+  directory's sender-key resolution and DID-document health check, didcomm-rust)
+  dereference relationship entries only against the top-level array, so
+  embedded-only documents break them even though both forms are spec-legal.
+  Parsing still accepts both forms.
+- **`ServiceEndpoint` is emitted in the DIDComm v2 object form**
+  (`{"uri": …, "accept": […], "routingKeys": []}`) — the spec requires an
+  object for `DIDCommMessaging` services; a bare URI string is non-conformant.
+  Parsing accepts the object form, a legacy bare string, or an array of either
+  (first entry with a URI wins); unusable values degrade to an empty endpoint
+  instead of failing the document. `routingKeys` is always emitted (as `[]`
+  when unset) because some consumers require the key to be present.
+
+### Added
+- `DIDDocument.Context` (`@context`, kept raw so any JSON-LD form round-trips)
+  and `DocumentContext(uris...)` to build one.
+- `DIDDocument.AssertionMethod`, parsed and resolved like the other
+  verification relationships. Required by verifiers for credential issuance;
+  DIDComm itself never reads it.
+- `ServiceTypeDIDCommMessaging` constant.
+
 ## [0.6.1] - 2026-07-16
 
 ### Fixed
@@ -122,6 +153,7 @@ the pack/unpack API all changed. There is no in-place upgrade from 0.4.x.
 - `SecretsResolver` interface and in-memory implementation.
 - GitHub Actions CI with linting and tests.
 
+[0.7.0]: https://github.com/notabene-id/go-didcomm/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/notabene-id/go-didcomm/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/notabene-id/go-didcomm/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/notabene-id/go-didcomm/compare/v0.4.0...v0.5.0

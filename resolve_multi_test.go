@@ -49,7 +49,7 @@ func TestMultiResolver_FallbackOverride(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	doc.Service = []Service{{ID: "custom", Type: "test", ServiceEndpoint: "http://test"}}
+	doc.Service = []Service{{ID: "custom", Type: "test", ServiceEndpoint: ServiceEndpoint{URI: "http://test"}}}
 	mem.Store(doc)
 
 	resolved, err := multi.Resolve(context.Background(), doc.ID)
