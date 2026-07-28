@@ -15,8 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   verification method — including ones embedded in a relationship — is hoisted
   into the top-level `verificationMethod` array and the relationship sections
   (`authentication`, `assertionMethod`, `keyAgreement`) are emitted as DID URL
-  references. Several ecosystem consumers (Veramo's PII key lookup, the network
-  directory's sender-key resolution and DID-document health check, didcomm-rust)
+  references. Several ecosystem consumers (Veramo and didcomm-rust among them)
   dereference relationship entries only against the top-level array, so
   embedded-only documents break them even though both forms are spec-legal.
   Parsing still accepts both forms.
