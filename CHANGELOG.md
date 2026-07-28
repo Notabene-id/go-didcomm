@@ -11,35 +11,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 (`{URI, Accept, RoutingKeys}`) instead of a plain string.
 
 ### Changed
-- **`DIDDocument.MarshalJSON` emits the canonical wire form**: every
-  verification method — including ones embedded in a relationship — is hoisted
-  into the top-level `verificationMethod` array and the relationship sections
-  (`authentication`, `assertionMethod`, `keyAgreement`) are emitted as DID URL
-  references. Several ecosystem consumers (Veramo and didcomm-rust among them)
-  dereference relationship entries only against the top-level array, so
-  embedded-only documents break them even though both forms are spec-legal.
-  Parsing still accepts both forms.
-- **`ServiceEndpoint` is emitted in the DIDComm v2 object form**
-  (`{"uri": …, "accept": […], "routingKeys": []}`) — the spec requires an
-  object for `DIDCommMessaging` services; a bare URI string is non-conformant.
-  Parsing accepts the object form, a legacy bare string, or an array of either
-  (first entry with a URI wins); unusable values degrade to an empty endpoint
-  instead of failing the document. `routingKeys` is always emitted (as `[]`
-  when unset) because some consumers require the key to be present.
-- **Generated and did:key-resolved documents use `JsonWebKey2020`** for their
-  verification methods — the material they carry is `publicKeyJwk`, and the
-  2020 types pair with `publicKeyMultibase` in the registry, so the previous
-  combination was off-registry. These documents also gain `@context` and an
-  `assertionMethod` referencing the signing key. Parsing of the 2020 and
-  legacy 2018/2019 types is unchanged.
+- `DIDDocument.MarshalJSON` emits the canonical wire form: verification
+  methods hoisted into a deduped top-level `verificationMethod` array,
+  relationships as DID URL references. Many consumers (Veramo, didcomm-rust)
+  dereference only against the top-level array. Parsing accepts both forms.
+- `ServiceEndpoint` marshals to the DIDComm v2 object form
+  (`{"uri", "accept", "routingKeys"}`); parses the object form, a legacy bare
+  string, or an array of either. `routingKeys` is always emitted.
+- Generated and did:key-resolved documents use `JsonWebKey2020` (matching
+  their `publicKeyJwk` material) and gain `@context` and `assertionMethod`.
+  Parsing of the 2020 and legacy 2018/2019 types is unchanged.
 
 ### Added
-- `DIDDocument.Context` (`@context`, kept raw so any JSON-LD form round-trips)
-  and `DocumentContext(uris...)` to build one.
-- `DIDDocument.AssertionMethod`, parsed and resolved like the other
-  verification relationships. Required by verifiers for credential issuance;
-  DIDComm itself never reads it.
-- `ServiceTypeDIDCommMessaging` constant.
+- `DIDDocument.Context` (raw `@context`) and `DocumentContext(uris...)`.
+- `DIDDocument.AssertionMethod`, resolved like the other relationships.
+- `VMTypeJSONWebKey` and `ServiceTypeDIDCommMessaging` constants.
 
 ## [0.6.1] - 2026-07-16
 

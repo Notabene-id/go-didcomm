@@ -24,9 +24,7 @@ const (
 	multicodecX25519  = 0xec
 )
 
-// VMTypeJSONWebKey is the verification-method type this library emits: the one
-// type whose material pairing, publicKeyJwk, every mainstream consumer
-// supports.
+// VMTypeJSONWebKey is the verification-method type this library emits.
 const VMTypeJSONWebKey = "JsonWebKey2020"
 
 // Verification-method types still accepted when parsing documents from older
@@ -38,8 +36,7 @@ const (
 	vmTypeX25519Legacy  = "X25519KeyAgreementKey2019"
 )
 
-// JSON-LD contexts for emitted documents: DID Core 1.0 plus the JWS-2020 suite
-// that defines JsonWebKey2020.
+// JSON-LD contexts emitted on generated documents.
 const (
 	contextDIDCore = "https://www.w3.org/ns/did/v1"
 	contextJWS2020 = "https://w3id.org/security/suites/jws-2020/v1"
@@ -181,8 +178,7 @@ func publicKeyFromMultibase(multibase, kid string) (jwk.Key, error) {
 // DIDDocument is a DID document covering the fields DIDComm and did:web
 // hosting need.
 type DIDDocument struct {
-	// Context is the JSON-LD @context, kept raw so string, array, and mixed
-	// forms all round-trip. Build one with [DocumentContext].
+	// Context is the raw JSON-LD @context; build one with [DocumentContext].
 	Context            json.RawMessage      `json:"@context,omitempty"`
 	ID                 string               `json:"id"`
 	VerificationMethod []VerificationMethod `json:"verificationMethod,omitempty"`
@@ -192,8 +188,8 @@ type DIDDocument struct {
 	Service            []Service            `json:"service,omitempty"`
 }
 
-// didDocumentJSON is the JSON wire format for parsing a DIDDocument, where
-// relationship entries may be inline objects or string references.
+// didDocumentJSON is the parse wire format; relationship entries may be
+// inline objects or string references.
 type didDocumentJSON struct {
 	Context            json.RawMessage      `json:"@context,omitempty"`
 	ID                 string               `json:"id"`
@@ -204,8 +200,8 @@ type didDocumentJSON struct {
 	Service            []Service            `json:"service,omitempty"`
 }
 
-// didDocumentRefsJSON is the JSON wire format for emitting a DIDDocument:
-// relationship entries are DID URL references into verificationMethod.
+// didDocumentRefsJSON is the emission wire format: relationships as DID URL
+// references into verificationMethod.
 type didDocumentRefsJSON struct {
 	Context            json.RawMessage      `json:"@context,omitempty"`
 	ID                 string               `json:"id"`
@@ -257,11 +253,9 @@ func (doc *DIDDocument) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// MarshalJSON emits the canonical wire form: every verification method is
-// hoisted into the top-level verificationMethod array and the relationship
-// sections carry DID URL references. Several ecosystem consumers dereference
-// relationship entries only against the top-level array, so embedded-only
-// documents break them even though both forms are spec-legal.
+// MarshalJSON hoists every verification method into the top-level
+// verificationMethod array and emits relationships as DID URL references —
+// many consumers dereference only against the top-level array.
 //
 //nolint:gocritic // hugeParam: value receiver so DIDDocument and *DIDDocument marshal identically
 func (doc DIDDocument) MarshalJSON() ([]byte, error) {
@@ -353,23 +347,19 @@ type Service struct {
 	ServiceEndpoint ServiceEndpoint `json:"serviceEndpoint"`
 }
 
-// ServiceEndpoint is a service endpoint. DIDComm v2 requires the object form
-// ({"uri": …}) for DIDCommMessaging services; legacy peers publish a bare URI
-// string and some publish an array of either. All three parse — the first
-// entry carrying a URI wins — and marshaling always emits one object.
+// ServiceEndpoint is a service endpoint. DIDComm v2 requires the object form;
+// legacy bare-string and array forms are accepted on parse.
 type ServiceEndpoint struct {
 	URI         string   `json:"uri"`
 	Accept      []string `json:"accept,omitempty"`
 	RoutingKeys []string `json:"routingKeys"`
 }
 
-// serviceEndpointJSON is ServiceEndpoint without its marshal methods, for
-// recursion-free encoding of the object form.
+// serviceEndpointJSON is ServiceEndpoint without its marshal methods.
 type serviceEndpointJSON ServiceEndpoint
 
-// MarshalJSON emits routingKeys as [] rather than null — at least one
-// mainstream consumer requires the key to be present on DIDCommMessaging
-// endpoints.
+// MarshalJSON emits routingKeys as [] rather than null — some consumers
+// require the key to be present.
 func (se ServiceEndpoint) MarshalJSON() ([]byte, error) {
 	w := serviceEndpointJSON(se)
 	if w.RoutingKeys == nil {
@@ -379,10 +369,8 @@ func (se ServiceEndpoint) MarshalJSON() ([]byte, error) {
 }
 
 // UnmarshalJSON accepts the object form, a bare URI string, or an array of
-// either (first entry with a URI wins). Unusable values parse to a zero
-// endpoint rather than failing the document, mirroring how unsupported key
-// types are tolerated: a service we cannot read must not make the rest of the
-// document unavailable.
+// either (first entry with a URI wins); unusable values parse to a zero
+// endpoint rather than failing the document.
 func (se *ServiceEndpoint) UnmarshalJSON(data []byte) error {
 	*se = ServiceEndpoint{}
 	trimmed := bytes.TrimSpace(data)

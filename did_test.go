@@ -412,9 +412,7 @@ func TestDIDDocument_UnmarshalJSON_MixedReferencesAndInline(t *testing.T) {
 	}
 }
 
-// TestDIDDocument_MarshalJSON_HoistsEmbeddedMethods verifies the canonical
-// emission: embedded relationship methods land in verificationMethod and the
-// relationships become DID URL references.
+// TestDIDDocument_MarshalJSON_HoistsEmbeddedMethods pins the canonical emission shape.
 func TestDIDDocument_MarshalJSON_HoistsEmbeddedMethods(t *testing.T) {
 	generated, _, err := GenerateDIDKey()
 	if err != nil {
@@ -506,8 +504,6 @@ func TestDIDDocument_MarshalJSON_HoistsEmbeddedMethods(t *testing.T) {
 	}
 }
 
-// TestDIDDocument_MarshalJSON_DoesNotDuplicateHoistedMethods verifies a method
-// present in both verificationMethod and a relationship is emitted once.
 func TestDIDDocument_MarshalJSON_DoesNotDuplicateHoistedMethods(t *testing.T) {
 	generated, _, err := GenerateDIDKey()
 	if err != nil {
@@ -566,8 +562,6 @@ func TestServiceEndpoint_UnmarshalJSON(t *testing.T) {
 	}
 }
 
-// TestServiceEndpoint_ObjectRoundTrip verifies accept and routingKeys survive
-// a parse/emit cycle.
 func TestServiceEndpoint_ObjectRoundTrip(t *testing.T) {
 	in := `{"uri":"https://x.example/didcomm","accept":["didcomm/v2"],"routingKeys":["did:web:m#k"]}`
 	var se ServiceEndpoint
@@ -590,8 +584,6 @@ func TestServiceEndpoint_ObjectRoundTrip(t *testing.T) {
 	}
 }
 
-// TestDIDDocument_UnmarshalJSON_AssertionMethodReference verifies
-// assertionMethod resolves string references like the other relationships.
 func TestDIDDocument_UnmarshalJSON_AssertionMethodReference(t *testing.T) {
 	generated, _, err := GenerateDIDKey()
 	if err != nil {
