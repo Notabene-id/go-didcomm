@@ -26,6 +26,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (first entry with a URI wins); unusable values degrade to an empty endpoint
   instead of failing the document. `routingKeys` is always emitted (as `[]`
   when unset) because some consumers require the key to be present.
+- **Generated and did:key-resolved documents use `JsonWebKey2020`** for their
+  verification methods — the material they carry is `publicKeyJwk`, and the
+  2020 types pair with `publicKeyMultibase` in the registry, so the previous
+  combination was off-registry. These documents also gain `@context` and an
+  `assertionMethod` referencing the signing key. Parsing of the 2020 and
+  legacy 2018/2019 types is unchanged.
 
 ### Added
 - `DIDDocument.Context` (`@context`, kept raw so any JSON-LD form round-trips)

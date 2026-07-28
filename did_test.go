@@ -34,8 +34,8 @@ func TestGenerateDIDKey(t *testing.T) {
 	if !strings.HasPrefix(authVM.ID, doc.ID+"#") {
 		t.Fatalf("auth key ID should start with DID#, got %s", authVM.ID)
 	}
-	if authVM.Type != "Ed25519VerificationKey2020" {
-		t.Fatalf("expected Ed25519VerificationKey2020, got %s", authVM.Type)
+	if authVM.Type != VMTypeJSONWebKey {
+		t.Fatalf("expected VMTypeJSONWebKey, got %s", authVM.Type)
 	}
 	if authVM.Controller != doc.ID {
 		t.Fatalf("controller should be DID, got %s", authVM.Controller)
@@ -46,8 +46,14 @@ func TestGenerateDIDKey(t *testing.T) {
 	if !strings.HasPrefix(kaVM.ID, doc.ID+"#") {
 		t.Fatalf("key agreement key ID should start with DID#, got %s", kaVM.ID)
 	}
-	if kaVM.Type != "X25519KeyAgreementKey2020" {
-		t.Fatalf("expected X25519KeyAgreementKey2020, got %s", kaVM.Type)
+	if kaVM.Type != VMTypeJSONWebKey {
+		t.Fatalf("expected VMTypeJSONWebKey, got %s", kaVM.Type)
+	}
+	if len(doc.Context) == 0 {
+		t.Fatal("generated document should carry @context")
+	}
+	if len(doc.AssertionMethod) != 1 || doc.AssertionMethod[0].ID != authVM.ID {
+		t.Fatalf("assertionMethod should reference the signing key, got %+v", doc.AssertionMethod)
 	}
 
 	if km == nil {

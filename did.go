@@ -24,13 +24,25 @@ const (
 	multicodecX25519  = 0xec
 )
 
-// Verification-method types this library emits, plus the legacy 2018/2019 types
-// it still accepts when parsing documents from older peers (W3C DID registry).
+// VMTypeJSONWebKey is the verification-method type this library emits: the one
+// type whose material pairing, publicKeyJwk, every mainstream consumer
+// supports.
+const VMTypeJSONWebKey = "JsonWebKey2020"
+
+// Verification-method types still accepted when parsing documents from older
+// peers (W3C DID registry).
 const (
 	vmTypeEd25519       = "Ed25519VerificationKey2020"
 	vmTypeX25519        = "X25519KeyAgreementKey2020"
 	vmTypeEd25519Legacy = "Ed25519VerificationKey2018"
 	vmTypeX25519Legacy  = "X25519KeyAgreementKey2019"
+)
+
+// JSON-LD contexts for emitted documents: DID Core 1.0 plus the JWS-2020 suite
+// that defines JsonWebKey2020.
+const (
+	contextDIDCore = "https://www.w3.org/ns/did/v1"
+	contextJWS2020 = "https://w3id.org/security/suites/jws-2020/v1"
 )
 
 // VerificationMethod represents a DID document verification method.
@@ -468,13 +480,14 @@ func buildDIDDocument(did, sigKID, encKID string, gk *generatedKeys) (*DIDDocume
 		return nil, nil, err
 	}
 
+	signing := VerificationMethod{ID: sigKID, Type: VMTypeJSONWebKey, Controller: did, PublicKey: sigPubJWK}
 	doc := &DIDDocument{
-		ID: did,
-		Authentication: []VerificationMethod{
-			{ID: sigKID, Type: vmTypeEd25519, Controller: did, PublicKey: sigPubJWK},
-		},
+		Context:         DocumentContext(contextDIDCore, contextJWS2020),
+		ID:              did,
+		Authentication:  []VerificationMethod{signing},
+		AssertionMethod: []VerificationMethod{signing},
 		KeyAgreement: []VerificationMethod{
-			{ID: encKID, Type: vmTypeX25519, Controller: did, PublicKey: encPubJWK},
+			{ID: encKID, Type: VMTypeJSONWebKey, Controller: did, PublicKey: encPubJWK},
 		},
 	}
 	km := &KeyMaterial{
