@@ -259,11 +259,14 @@ func (doc DIDDocument) MarshalJSON() ([]byte, error) {
 		Service: doc.Service,
 	}
 
-	methods := make([]VerificationMethod, len(doc.VerificationMethod))
-	copy(methods, doc.VerificationMethod)
-	seen := make(map[string]bool, len(methods))
-	for _, vm := range methods {
+	methods := make([]VerificationMethod, 0, len(doc.VerificationMethod))
+	seen := make(map[string]bool, len(doc.VerificationMethod))
+	for _, vm := range doc.VerificationMethod {
+		if seen[vm.ID] {
+			continue
+		}
 		seen[vm.ID] = true
+		methods = append(methods, vm)
 	}
 	hoist := func(vms []VerificationMethod) []string {
 		if len(vms) == 0 {
@@ -369,6 +372,7 @@ func (se ServiceEndpoint) MarshalJSON() ([]byte, error) {
 // types are tolerated: a service we cannot read must not make the rest of the
 // document unavailable.
 func (se *ServiceEndpoint) UnmarshalJSON(data []byte) error {
+	*se = ServiceEndpoint{}
 	trimmed := bytes.TrimSpace(data)
 	if len(trimmed) == 0 {
 		return nil
